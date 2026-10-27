@@ -1,5 +1,5 @@
 /* CC_Code Service Worker：外壳预缓存 + 编译器资源按需缓存 */
-const VER = 'cccode-v1.4.0';
+const VER = 'cccode-v1.5.0';
 const SHELL_CACHE = VER + '-shell';
 // 编译器资源缓存名固定：升级只重下几百 KB 外壳，不重下 28MB 编译器
 const ASSET_CACHE = 'cccode-clang-v1';
@@ -16,7 +16,10 @@ const SHELL = [
   './js/worker.js',
   './js/plugins.js',
   './js/plugins/cph.js',
+  './js/lint.js',
   './vendor/clang-wasm.global.js',
+  './fonts/JetBrainsMono-Regular.woff2',
+  './fonts/SourceCodePro-Regular.woff2',
   './manifest.webmanifest',
   './icons/icon.svg',
   './icons/icon-192.png',

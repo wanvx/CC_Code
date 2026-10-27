@@ -62,7 +62,9 @@ await page.screenshot({ path: SHOT + 'v5-01-panel.png' });
 const GUIDE_CODE = '#include <cstdio>\n\nint main() {\n    if (1) {\n        for (int i = 0; i < 2; i++) {\n            printf("%d\\n", i);\n        }\n    }\n    return 0;\n}\n';
 await page.evaluate((c) => window.__pc.editor.setValue(c, true), GUIDE_CODE);
 await page.waitForTimeout(250);
-const gcount = () => page.evaluate(() => document.querySelectorAll('#hl .gi').length);
+// v1.5 起 .gi 恒存在（保持行内下标稳定），关闭时宽度归 0 → 按可见宽度计数
+const gcount = () => page.evaluate(() =>
+  [...document.querySelectorAll('#hl .gi')].filter((g) => g.getBoundingClientRect().width > 0.5).length);
 ok('默认开启有参考线', (await gcount()) > 0, 'gi=' + (await gcount()));
 
 // 8 空格缩进 = 2 级 → 宽度应是 4 空格缩进（1 级）的两倍

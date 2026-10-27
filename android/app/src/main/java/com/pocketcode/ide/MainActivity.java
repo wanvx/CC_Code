@@ -56,6 +56,20 @@ public class MainActivity extends android.app.Activity {
         s.setUserAgentString(s.getUserAgentString() + " PocketCodeNative");
         s.setCacheMode(WebSettings.LOAD_DEFAULT);
 
+        // 覆盖安装后 WebView 的 HTTP 缓存里可能还留着上一版的 js/css（表现为"新版本装上去了
+        // 但界面还是老的"）。版本号一变就清一次缓存：所有资源都在 APK 里，清掉不心疼。
+        try {
+            android.content.SharedPreferences sp = getSharedPreferences("cccode", MODE_PRIVATE);
+            int lastSeen = sp.getInt("assetVersionCode", -1);
+            int now = getPackageManager().getPackageInfo(getPackageName(), 0).versionCode;
+            if (lastSeen != now) {
+                webView.clearCache(true);
+                sp.edit().putInt("assetVersionCode", now).apply();
+            }
+        } catch (Exception ignored) {
+            // 拿不到版本号就不清，不影响使用
+        }
+
         // 导出桥：前端检测到 window.PocketCodeNative 时走系统文件选择器
         webView.addJavascriptInterface(new Bridge(), "PocketCodeNative");
 

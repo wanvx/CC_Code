@@ -8,6 +8,8 @@
 
 - **离线编译运行**：Clang 22 + wasm-ld + WASI 运行时全部在浏览器里跑，无后端、无上传
 - **代码编辑器**：C/C++ 语法高亮、行号与代码同行对齐、自动补全（标准库 + 项目内符号）、括号配对、缩进参考线（可开关）、Ctrl+滚轮缩放
+- **代码字体**：系统等宽 / JetBrains Mono / Source Code Pro / 系统无衬线四选一，前两款内置离线可用（OFL 授权）
+- **编辑不跳动**：补全弹窗出现、输入输出面板开合时，正在编辑的那一行钉在原地；2000 行代码单次编辑约 22ms（增量重绘，不整篇重建）
 - **实时检查**：打字时立刻标出括号没配对、语句末尾漏分号、字面量/注释没闭合、`if (a = b)` 误用赋值；行号变色 + 问题列表 + 状态栏计数，设置里可关
 - **文件树**：单一 `root` 根目录，可无限嵌套文件夹，文件夹行内直接新建子目录 / `.cpp`，支持重命名与删除
 - **输入与输出同层**：下方面板「输出 / 输入 / 问题」三个标签页，输入按文件独立保存，点「运行」自动喂给程序
@@ -98,6 +100,8 @@ node server.mjs &          # 需要先起静态服务器
 node tests/v3-stdin.mjs    # stdin 输入 / 补全关闭 / 关于与更新
 node tests/v5-ac-panel-guides.mjs   # 补全浮层跟随 / 三 tab 面板 / 缩进参考线
 node tests/v7-ac-first-lint.mjs     # 补全首项选择 / 实时检查
+node tests/v9-scroll-font-panel.mjs # 弹窗不动 / 面板开合 / 孤立点击闸 / 字体
+node tests/v10-perf.mjs             # 增量重绘性能（300 / 2000 行）
 node tests/lint-unit.mjs            # 实时检查规则单测（无需浏览器）
 node tests/v2-smoke.mjs    # 文件树 / 编译 / cph / 设置
 node tests/inline-ln.mjs   # 行号与代码对齐回归

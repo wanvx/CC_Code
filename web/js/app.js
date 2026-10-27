@@ -9,8 +9,8 @@ const $ = (s) => document.querySelector(s);
 
 // ── 应用信息（检查更新用，发版时同步 version.json） ──
 const APP_NAME = 'CC_Code';
-const APP_VERSION = '1.4.0';
-const APP_VERSION_CODE = 9;
+const APP_VERSION = '1.5.0';
+const APP_VERSION_CODE = 10;
 const REPO_OWNER = 'wanvx';
 const REPO_NAME = 'CC_Code';
 const REPO_URL = 'https://github.com/' + REPO_OWNER + '/' + REPO_NAME;
@@ -31,10 +31,23 @@ const DEFAULTS = {
   fontSize: 13,
   indentGuides: true,
   realtimeLint: true,
+  fontFamily: 'system',
+  panelCollapsed: false,
   stdin: '',
   prefillOn: false,
   prefillText: '#include <cstdio>\n\nint main() {\n    \n    return 0;\n}\n'
 };
+// 代码字体：内置两款开源等宽（SIL OFL，离线可用）+ 系统等宽 / 系统无衬线
+const CODE_FONTS = [
+  { id: 'system', name: '系统等宽', css: 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", "Noto Sans Mono CJK SC", monospace' },
+  { id: 'jetbrains', name: 'JetBrains Mono', css: '"JetBrains Mono", ui-monospace, "Noto Sans Mono CJK SC", monospace' },
+  { id: 'sourcecode', name: 'Source Code Pro', css: '"Source Code Pro", ui-monospace, "Noto Sans Mono CJK SC", monospace' },
+  { id: 'sans', name: '系统无衬线', css: 'system-ui, -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif' }
+];
+const FONT_OF = {};
+for (const f of CODE_FONTS) FONT_OF[f.id] = f;
+const codeFontCss = (id) => (FONT_OF[id] || CODE_FONTS[0]).css;
+
 const VALID_STD = { stdC: ['gnu11', 'gnu17', 'gnu23'], stdCpp: ['gnu++11', 'gnu++14', 'gnu++17', 'gnu++20', 'gnu++23'] };
 
 const state = {
@@ -67,6 +80,8 @@ function loadSettings() {
   if (typeof state.settings.prefillText !== 'string') state.settings.prefillText = DEFAULTS.prefillText;
   if (typeof state.settings.indentGuides !== 'boolean') state.settings.indentGuides = DEFAULTS.indentGuides;
   if (typeof state.settings.realtimeLint !== 'boolean') state.settings.realtimeLint = DEFAULTS.realtimeLint;
+  if (!FONT_OF[state.settings.fontFamily]) state.settings.fontFamily = DEFAULTS.fontFamily;
+  if (typeof state.settings.panelCollapsed !== 'boolean') state.settings.panelCollapsed = DEFAULTS.panelCollapsed;
 }
 function saveSettings() {
   try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(state.settings)); } catch (e) { /* 忽略 */ }
@@ -784,9 +799,10 @@ function renderProblems(list) {
     '<div class="p-loc">' + escapeHtml(p.file) + ':' + p.line + ':' + p.col + '</div></div></div>'
   ).join('');
   $('#problems').querySelectorAll('.prob').forEach((el) => {
-    el.addEventListener('click', () => {
+    el.addEventListener('click', (e) => {
+      if (!isRealTap(e)) return;
       editor.gotoLine(+el.dataset.line, +el.dataset.col);
-      if (isMobile()) $('#panel').classList.add('collapsed');
+      if (isMobile()) setPanelCollapsed(true);
     });
   });
 }
@@ -801,8 +817,55 @@ function termLine(text, cls) {
   $('#terminal').scrollTop = $('#terminal').scrollHeight;
 }
 function showPanel(tab) {
-  $('#panel').classList.remove('collapsed');
+  setPanelCollapsed(false);
   switchPanelTab(tab || 'output');
+}
+
+/**
+ * 面板开合的唯一入口。
+ * 面板一展开编辑区就变矮，代码会整体"跳"一下 —— 这里在开合前后把光标行钉在原来的
+ * 屏幕位置，视觉上就是面板从下面盖上来/收回去，正在编辑的那一行不动。
+ */
+function setPanelCollapsed(collapsed, remember) {
+  const el = $('#panel');
+  if (el.classList.contains('collapsed') === !!collapsed) return;
+  const y = editor.caretScreenY();
+  el.classList.toggle('collapsed', !!collapsed);
+  editor.keepCaretScreenY(y);
+  if (remember !== false) {
+    state.settings.panelCollapsed = !!collapsed;
+    saveSettings();
+  }
+}
+const isPanelCollapsed = () => $('#panel').classList.contains('collapsed');
+
+// ── 只认真实点按 ──
+// 蓝牙鼠标休眠/重连时，Android 偶尔会补发一个"没有按下动作"的 click：它会点中
+// 面板标题栏把面板展开，界面跟着跳。这里给关键控件做一道闸：没有在 2 秒内发生过
+// 该元素上的 pointerdown/mousedown/touchdown 的 click 一律丢弃。
+let _lastDown = null;
+let _lastKeyAt = 0;
+const markDown = (e) => { _lastDown = { el: e.target, t: Date.now() }; };
+document.addEventListener('pointerdown', markDown, true);
+document.addEventListener('mousedown', markDown, true);
+document.addEventListener('touchstart', markDown, true);
+document.addEventListener('keydown', () => { _lastKeyAt = Date.now(); }, true);
+function isRealTap(e) {
+  if (!e.isTrusted) return false;
+  // detail === 0：键盘回车 / 无障碍激活，只认刚按过键的情况
+  if (e.detail === 0) return Date.now() - _lastKeyAt < 2000;
+  const d = _lastDown;
+  if (!d || Date.now() - d.t > 2000) return false;
+  return d.el === e.target || (!!d.el && typeof d.el.contains === 'function' && d.el.contains(e.target));
+}
+/** 给容器装闸：命中孤立点击就整段吃掉，不让它触发任何状态变化 */
+function guardOrphanClicks(el) {
+  if (!el) return;
+  el.addEventListener('click', (e) => {
+    if (isRealTap(e)) return;
+    e.stopPropagation();
+    e.preventDefault();
+  }, true);
 }
 const PANE_OF = { output: 'terminal', stdin: 'stdin-pane', problems: 'problems' };
 let panelTab = 'output';
@@ -962,7 +1025,14 @@ function settingsBody() {
   const kb = Math.max(1, Math.round(state.vfs.bytes() / 1024));
   const fileCount = state.vfs.paths().length;
 
+  const fontBtn = (f) => '<button class="font-opt' + (f.id === s.fontFamily ? ' on' : '') + '" data-v="' + f.id + '"' +
+    ' style="font-family:' + f.css.replace(/"/g, '&quot;') + '">' + f.name +
+    '<span class="font-sample">int main()</span></button>';
+
   return '<div class="field"><label>主题</label>' + seg('seg-theme', ['dark', 'light'], s.theme, (v) => (v === 'dark' ? '深色' : '浅色')) + '</div>' +
+    '<div class="field"><label>代码字体</label>' +
+      '<div class="font-grid" id="seg-font">' + CODE_FONTS.map(fontBtn).join('') + '</div>' +
+      '<div class="hint">内置两款开源等宽字体（离线可用）。「系统无衬线」字符宽度不统一，缩进参考线会对不齐。</div></div>' +
     '<div class="field"><div class="row-between"><label style="margin:0">缩进参考线</label>' +
       '<button class="switch' + (s.indentGuides ? ' on' : '') + '" id="m-guides"></button></div>' +
       '<div class="hint">用灰色虚线标出每一级缩进的位置，嵌套层级一眼看清。</div></div>' +
@@ -1018,6 +1088,13 @@ function settingsModal() {
     });
   };
   bindSeg('seg-theme', 'theme');
+  document.querySelectorAll('#seg-font button').forEach((b) => {
+    b.addEventListener('click', () => {
+      s.fontFamily = b.dataset.v;
+      document.querySelectorAll('#seg-font button').forEach((x) => x.classList.toggle('on', x === b));
+      applySettings();
+    });
+  });
   bindSeg('seg-stdc', 'stdC');
   bindSeg('seg-stdcpp', 'stdCpp');
 
@@ -1105,11 +1182,22 @@ function settingsModal() {
 
 function applySettings() {
   document.documentElement.dataset.theme = state.settings.theme;
+  editor.setFontFamily(codeFontCss(state.settings.fontFamily));
   editor.setFontSize(state.settings.fontSize);
   editor.setIndentGuides(state.settings.indentGuides);
+  // 内置字体先预热：否则第一帧用回退字体量宽度，行号会短暂偏一下
+  const fid = state.settings.fontFamily;
+  if ((fid === 'jetbrains' || fid === 'sourcecode') && document.fonts) {
+    const fam = fid === 'jetbrains' ? 'JetBrains Mono' : 'Source Code Pro';
+    document.fonts.load('13px "' + fam + '"').then(() => {
+      editor._padLeft = null;
+      editor.syncScroll();
+    }).catch(() => {});
+  }
   $('#st-font').textContent = editor.fontSize;
   const lang = state.active ? langOf(state.active) : 'cpp';
   $('#st-std').textContent = lang === 'c' ? state.settings.stdC : lang === 'cpp' ? state.settings.stdCpp : '—';
+  $('#panel').classList.toggle('collapsed', !!state.settings.panelCollapsed);
   const meta = document.querySelector('meta[name="theme-color"]');
   if (meta) meta.setAttribute('content', state.settings.theme === 'light' ? '#ffffff' : '#14161c');
   saveSettings();
@@ -1156,6 +1244,7 @@ function init() {
     state, plugins, openFile, renderTree, runActive, editor,
     openPlugin, openFilesView, openDrawer, closeDrawer, openModal, closeModal,
     settingsModal, checkUpdate, openExternal, runLintNow,
+    showPanel, switchPanelTab, setPanelCollapsed, isPanelCollapsed, isRealTap,
     appInfo: { name: APP_NAME, version: APP_VERSION, code: APP_VERSION_CODE, repo: REPO_URL }
   };
 
@@ -1182,7 +1271,7 @@ function init() {
 
   $('#btn-run').addEventListener('click', runActive);
   $('#btn-export').addEventListener('click', exportActive);
-  $('#st-lint').addEventListener('click', () => showPanel('problems'));
+  $('#st-lint').addEventListener('click', (e) => { if (isRealTap(e)) showPanel('problems'); });
   $('#btn-settings').addEventListener('click', settingsModal);
   $('#side-close').addEventListener('click', () => { closeDrawer(); if (!isMobile()) $('#sidebar').style.display = 'none'; });
   $('#btn-drawer').addEventListener('click', () => {
@@ -1196,7 +1285,10 @@ function init() {
   $('#mask').addEventListener('click', closeDrawer);
   $('#modal-close').addEventListener('click', closeModal);
   $('#modal').addEventListener('click', (e) => { if (e.target.id === 'modal') closeModal(); });
-  $('#panel-toggle').addEventListener('click', () => $('#panel').classList.toggle('collapsed'));
+  $('#panel-toggle').addEventListener('click', (e) => {
+    if (!isRealTap(e)) return;
+    setPanelCollapsed(!isPanelCollapsed());
+  });
   // 「清空」按当前 tab 走：输出清终端，输入清输入框，问题不处理
   $('#btn-clear').addEventListener('click', () => {
     if (panelTab === 'stdin') {
@@ -1213,8 +1305,9 @@ function init() {
 
   const sTa = $('#stdin-ta');
   sTa.addEventListener('input', () => setStdinFor(state.active, sTa.value));
-  document.querySelectorAll('.panel-tab').forEach((b) => b.addEventListener('click', () => {
-    $('#panel').classList.remove('collapsed');
+  document.querySelectorAll('.panel-tab').forEach((b) => b.addEventListener('click', (e) => {
+    if (!isRealTap(e)) return;
+    setPanelCollapsed(false);
     switchPanelTab(b.dataset.tab);
     if (b.dataset.tab === 'stdin' && state.active && isRunnable(state.active)) setTimeout(() => sTa.focus(), 0);
   }));
@@ -1255,9 +1348,41 @@ function init() {
     saveSettings();
   }, { passive: false });
 
+  // 孤立点击闸：面板与「运行」是"一碰就改变布局"的地方，最容易被误触/被补发的 click 打中
+  guardOrphanClicks($('#panel'));
+  guardOrphanClicks($('#btn-run'));
+
+  // 布局链滚动守卫：WebView 有时会替我们滚动"最近的可滚动祖先"（reveal caret、
+  // 输入设备切换等），一旦发生整块视图就被顶走。这些容器本来就不该滚动，发现就归零。
+  for (const sel of ['#app', '#workspace', '#editor-area', '#editor-body', '#code-wrap']) {
+    const el = $(sel);
+    if (!el) continue;
+    el.addEventListener('scroll', () => {
+      if (el.scrollTop) el.scrollTop = 0;
+      if (el.scrollLeft) el.scrollLeft = 0;
+    }, { passive: true });
+  }
+  const docReset = () => {
+    if (window.scrollY || window.scrollX) window.scrollTo(0, 0);
+    const se = document.scrollingElement;
+    if (se && (se.scrollTop || se.scrollLeft)) { se.scrollTop = 0; se.scrollLeft = 0; }
+  };
+  window.addEventListener('scroll', docReset, { passive: true });
+  document.addEventListener('scroll', docReset, { passive: true, capture: true });
+
+  // 输入设备切换（蓝牙鼠标休眠/唤醒）会夹带一次 resize/visibility 变化：
+  // 趁这个机会把面板状态拉回用户上次选择的样子，误展开的面板会自己收回去。
+  const assertPanelState = () => {
+    const want = !!state.settings.panelCollapsed;
+    if (isPanelCollapsed() !== want) setPanelCollapsed(want, false);
+  };
   window.addEventListener('resize', () => {
     editor.syncScroll();
     $('#side-close').classList.toggle('hidden', !isMobile());
+    assertPanelState();
+  });
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) assertPanelState();
   });
 
   if ('serviceWorker' in navigator && !/PocketCodeNative/.test(navigator.userAgent)) {

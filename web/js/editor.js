@@ -1,5 +1,5 @@
 // 代码编辑器：高亮镜像层 + 透明 textarea（原生光标/选区/输入法/撤销）
-import { highlightHtml, splitHighlightLines } from './hl.js';
+import { highlightLines } from './hl.js';
 import { suggestions, snippetFor, lookup, extractSymbols } from './complete.js';
 
 const PAIRS = { '(': ')', '[': ']', '{': '}', '"': '"', "'": "'" };
@@ -38,7 +38,10 @@ export class CodeEditor {
     this.lang = 'cpp';
     this.fontSize = 13;
     this.lineHeight = 20;
-    this.symbols = [];
+    this._symCache = null;        // 符号表懒计算
+    this._rows = null;            // 当前渲染出的行元素
+    this._src = null;             // 每行的高亮 HTML
+    this._lines = null;           // 每行的纯文本
     this.diags = new Map();       // 编译诊断：行号 → error / warning
     this.lintMap = new Map();     // 实时检查：行号 → error / warning
     this.acItems = [];
@@ -61,6 +64,7 @@ export class CodeEditor {
     this.ta.scrollTop = 0;
     this.ta.scrollLeft = 0;
     this._lastX = -1;
+    this._rows = null;
     this.render();
     if (!silent) this.onChange();
     this.emitCaret();
@@ -87,29 +91,150 @@ export class CodeEditor {
   // 字体度量差异（Android WebView 中文回退、亚像素舍入）不可能再造成累积错位。
   render() {
     const v = this.ta.value;
-    const src = splitHighlightLines(highlightHtml(v));
+    const src = highlightLines(v);
+    const lines = v.split('\n');
     const total = src.length;
+    this._setLnPad(total);
+
+    let html = '';
+    for (let i = 0; i < total; i++) html += this._rowHtml(i, src[i], lines[i]);
+    this.hlCode.innerHTML = html;
+    this._rows = Array.from(this.hlCode.children);
+    this._src = src;
+    this._lines = lines;
+    this._symCache = null;
+    this.syncScroll();
+  }
+
+  /**
+   * 输入时的增量重绘：只改真正动过的行。
+   * 整篇 innerHTML 重建在 2000 行文件上要 40~90ms（手机上成倍），每敲一个字来一遍
+   * 就是肉眼可见的卡顿和视图抖动；按行打补丁后单行更新约 0.5ms。
+   */
+  patch() {
+    if (!this._rows || !this._lines) { this.render(); return; }
+    const v = this.ta.value;
+    const lines = v.split('\n');
+    const olds = this._lines;
+    if (lines.length === olds.length && lines.every((s, i) => s === olds[i])) { this.syncScroll(); return; }
+
+    const src = highlightLines(v);
+    const oldSrc = this._src;
+    const total = src.length;
+    this._setLnPad(total);
+
+    // 文本差异窗口：公共前缀 + 公共后缀（打字时通常只覆盖一行）
+    const minLen = Math.min(total, olds.length);
+    let lo = 0;
+    while (lo < minLen && lines[lo] === olds[lo]) lo++;
+    let hiN = total, hiO = olds.length;
+    while (hiN > lo && hiO > lo && lines[hiN - 1] === olds[hiO - 1]) { hiN--; hiO--; }
+
+    this._src = src;
+    this._lines = lines;
+    this._symCache = null;
+    this._replaceRows(lo, hiN, hiO);
+
+    // 差异窗口外：文本没变但高亮可能变（例如刚敲下 /* 让后面整段变注释）
+    for (let i = 0; i < lo; i++) if (src[i] !== oldSrc[i]) this._paintRow(i);
+    const shift = total - olds.length;
+    for (let i = hiN; i < total; i++) {
+      const o = i - shift;
+      if (o >= 0 && o < oldSrc.length && src[i] !== oldSrc[o]) this._paintRow(i);
+    }
+    this.syncScroll();
+  }
+
+  _setLnPad(total) {
     const digits = Math.max(2, String(total).length);
+    if (digits === this._digits) return;
+    this._digits = digits;
     // 行号占位 = 位数 + 2 个空格间隔；#ta 的 padding-left 用同一变量，输入层与显示层水平对齐
     document.documentElement.style.setProperty('--ln-pad', String(digits + 2));
+    this._padTop = null;
+  }
 
-    const raw = this.guides ? v.split('\n') : null;
-    let html = '';
-    for (let i = 0; i < total; i++) {
-      const sev = this.diags.get(i + 1) || this.lintMap.get(i + 1);
-      let gi = '';
-      if (raw) {
-        const n = indentLevels(raw[i] || '');
-        // 只画到本行实际缩进宽度，虚线本身由 CSS 的 mask 生成
-        if (n) gi = '<span class="gi" style="width:' + n * 4 + 'ch"></span>';
+  _rowHtml(i, srcHtml, rawLine) {
+    const sev = this.diags.get(i + 1) || this.lintMap.get(i + 1);
+    // .gi 始终存在（缩进 0 时宽 0），这样 .ln/.lt 的下标恒为 1/2，补丁可以 O(1) 取到
+    const n = this.guides ? indentLevels(rawLine || '') : 0;
+    return '<div class="cl' + (sev === 'error' ? ' err' : sev === 'warning' ? ' warn' : '') + '">' +
+      '<span class="gi" style="width:' + n * 4 + 'ch"></span>' +
+      '<span class="ln">' + (i + 1) + '</span>' +
+      '<span class="lt">' + (srcHtml || '') + '</span></div>';
+  }
+
+  _rowEl(i) {
+    const box = document.createElement('div');
+    box.innerHTML = this._rowHtml(i, this._src[i], this._lines[i]);
+    return box.firstElementChild;
+  }
+
+  /** 用新行替换 [lo, hiOld) 这段旧行 */
+  _replaceRows(lo, hiNew, hiOld) {
+    const rows = this._rows;
+    const added = hiNew - lo, removed = hiOld - lo;
+    const keep = Math.min(added, removed);
+    for (let k = 0; k < keep; k++) this._paintRow(lo + k);
+
+    if (added > removed) {
+      const made = [];
+      const frag = document.createDocumentFragment();
+      for (let k = keep; k < added; k++) {
+        const el = this._rowEl(lo + k);
+        made.push(el);
+        frag.appendChild(el);
       }
-      html += '<div class="cl' + (sev === 'error' ? ' err' : sev === 'warning' ? ' warn' : '') + '">' + gi +
-        '<span class="ln">' + (i + 1) + '</span>' +
-        '<span class="lt">' + (src[i] || '') + '</span></div>';
+      this.hlCode.insertBefore(frag, rows[hiOld] || null);
+      rows.splice(lo + keep, 0, ...made);
+      this._renumber(lo + keep);
+    } else if (removed > added) {
+      for (let k = added; k < removed; k++) rows[lo + k].remove();
+      rows.splice(lo + added, removed - added);
+      this._renumber(lo + added);
     }
-    this.hlCode.innerHTML = html;
-    this.syncScroll();
-    this.symbols = extractSymbols(v);
+  }
+
+  /** 行号重排：只有在插入/删除行之后才需要 */
+  _renumber(from) {
+    const rows = this._rows;
+    for (let i = from; i < rows.length; i++) {
+      const ln = rows[i].children[1];
+      const want = String(i + 1);
+      if (ln && ln.textContent !== want) ln.textContent = want;
+    }
+  }
+
+  _paintRow(i) {
+    const row = this._rows[i];
+    if (!row) return;
+    const sev = this.diags.get(i + 1) || this.lintMap.get(i + 1);
+    const cls = 'cl' + (sev === 'error' ? ' err' : sev === 'warning' ? ' warn' : '');
+    if (row.className !== cls) row.className = cls;
+    const lt = row.children[2];
+    const html = this._src[i] || '';
+    if (lt && lt.innerHTML !== html) lt.innerHTML = html;
+    const gi = row.children[0];
+    if (gi) {
+      const w = (this.guides ? indentLevels(this._lines[i] || '') : 0) * 4 + 'ch';
+      if (gi.style.width !== w) gi.style.width = w;
+    }
+  }
+
+  /** 只刷新行号颜色（诊断/实时检查用），不碰代码 DOM */
+  paintMarks() {
+    if (!this._rows || this._rows.length !== this._lines.length) { this.render(); return; }
+    for (let i = 0; i < this._rows.length; i++) {
+      const sev = this.diags.get(i + 1) || this.lintMap.get(i + 1);
+      const cls = 'cl' + (sev === 'error' ? ' err' : sev === 'warning' ? ' warn' : '');
+      if (this._rows[i].className !== cls) this._rows[i].className = cls;
+    }
+  }
+
+  /** 符号表懒计算：输入时不重复扫全文 */
+  get syms() {
+    if (!this._symCache) this._symCache = extractSymbols(this.ta.value);
+    return this._symCache;
   }
 
   /** 缩进参考线开关 */
@@ -117,7 +242,17 @@ export class CodeEditor {
     const next = !!on;
     if (next === this.guides) return;
     this.guides = next;
-    this.render();
+    if (!this._rows) { this.render(); return; }
+    for (let i = 0; i < this._rows.length; i++) this._paintRow(i);
+  }
+
+  /** 字体（设置里切换），CSS 变量一变两层同时换，永远保持对齐 */
+  setFontFamily(css) {
+    document.documentElement.style.setProperty('--code-font', css);
+    this._padTop = null;
+    this._padLeft = null;
+    if (this._mirrorEl) this._mirrorEl.style.fontFamily = css;
+    this.syncScroll();
   }
 
   syncScroll() {
@@ -132,6 +267,8 @@ export class CodeEditor {
     const w = this.wrap;
     if (w.scrollTop !== 0) w.scrollTop = 0;
     if (w.scrollLeft !== 0) w.scrollLeft = 0;
+    const host = this.host;
+    if (host && host.scrollTop !== 0) host.scrollTop = 0;
     // 浮层跟着代码一起走
     if (this.acOpen) this.placeAc();
     if (!this.sigEl.classList.contains('hidden')) this.placeSig();
@@ -172,9 +309,49 @@ export class CodeEditor {
     const y = this._padTop + line * lh;   // 本行在内容坐标里的顶边（wrap=off，无软换行）
     const viewH = ta.clientHeight;
     const top = ta.scrollTop;
-    if (y < top) ta.scrollTop = Math.max(0, y - lh);
-    else if (y + lh > top + viewH) ta.scrollTop = Math.max(0, y + lh * 2 - viewH);
+    if (y < top) ta.scrollTop = Math.max(0, y);
+    else if (y + lh > top + viewH) ta.scrollTop = Math.max(0, y + lh - viewH);
     this.syncScroll();
+  }
+
+  /** 光标行当前在屏幕上的 y（用于面板开合时保持画面不动） */
+  caretScreenY() {
+    const ta = this.ta;
+    const lh = this.lineHeight || 20;
+    if (this._padTop == null) this._padTop = parseFloat(getComputedStyle(ta).paddingTop) || 8;
+    let line = 0;
+    const v = ta.value;
+    for (let i = ta.selectionStart - 1; i >= 0; i--) if (v.charCodeAt(i) === 10) line++;
+    return ta.getBoundingClientRect().top + this._padTop + line * lh - ta.scrollTop;
+  }
+
+  /** 面板开合后把光标行拉回原来的屏幕位置：界面看起来是"面板盖上来"，代码不跟着跳 */
+  keepCaretScreenY(y) {
+    const ta = this.ta;
+    const now = this.caretScreenY();
+    const dy = now - y;
+    if (Math.abs(dy) < 0.5) return;
+    ta.scrollTop = Math.max(0, ta.scrollTop + dy);
+    this.syncScroll();
+  }
+
+  /**
+   * 在"编辑区滚动位置不变"的前提下执行一段 DOM 操作。
+   * WebView 在布局变化后可能替我们把 textarea 滚一下（reveal caret），
+   * 表现就是"补全弹窗一出来，正在编辑的那一行动了"。这里做完立刻还原，
+   * 下一帧再兜一次（引擎的滚动修正常发生在布局之后）。
+   */
+  _lockScroll(fn) {
+    const ta = this.ta;
+    const y = ta.scrollTop, x = ta.scrollLeft;
+    fn();
+    if (ta.scrollTop !== y || ta.scrollLeft !== x) { ta.scrollTop = y; ta.scrollLeft = x; this.syncScroll(); }
+    if (!this._lockRaf) {
+      this._lockRaf = requestAnimationFrame(() => {
+        this._lockRaf = 0;
+        if (ta.scrollTop !== y || ta.scrollLeft !== x) { ta.scrollTop = y; ta.scrollLeft = x; this.syncScroll(); }
+      });
+    }
   }
 
   // ── 诊断 ─────────────────────────────
@@ -186,7 +363,7 @@ export class CodeEditor {
       if (cur === 'error') continue;
       this.diags.set(it.line, it.severity === 'error' ? 'error' : 'warning');
     }
-    this.render();
+    this.paintMarks();
   }
 
   /** 实时检查结果（不编译）：只影响行号栏染色，编译诊断优先 */
@@ -202,7 +379,7 @@ export class CodeEditor {
     let same = next.size === this.lintMap.size;
     if (same) for (const [k, v] of next) if (this.lintMap.get(k) !== v) { same = false; break; }
     this.lintMap = next;
-    if (!same) this.render();
+    if (!same) this.paintMarks();
   }
 
   gotoLine(line, col) {
@@ -227,35 +404,45 @@ export class CodeEditor {
     this.onCaret(line, col, pos);
   }
 
+  /**
+   * 光标在内容坐标里的位置（含 padding，未扣滚动）。
+   * y 直接用行号算（wrap=off，每行固定 lineHeight），x 只把「当前行光标前的内容」放进测量盒。
+   * 早先是把整个文件都塞进 mirror：2000 行时要 8~20ms，还让 WebView 反复重排，
+   * 是输入卡顿和视图晃动的来源之一。
+   */
   caretXY(pos) {
-    if (!this.mirror) {
-      const d = document.createElement('div');
-      d.style.position = 'absolute';
-      d.style.visibility = 'hidden';
-      d.style.whiteSpace = 'pre';
-      d.style.left = '-9999px';
-      d.style.top = '0';
-      document.body.appendChild(d);
-      this.mirror = d;
+    const ta = this.ta, v = ta.value;
+    let line = 0, lineStart = 0;
+    for (let i = pos - 1; i >= 0; i--) {
+      if (v.charCodeAt(i) === 10) { line++; if (!lineStart) lineStart = i + 1; }
     }
-    const d = this.mirror;
-    const cs = getComputedStyle(this.ta);
-    d.style.fontFamily = cs.fontFamily;
+    if (this._padTop == null) this._padTop = parseFloat(getComputedStyle(ta).paddingTop) || 8;
+    if (this._padLeft == null) this._padLeft = parseFloat(getComputedStyle(ta).paddingLeft) || 0;
+
+    const d = this._mirror();
+    const cs = getComputedStyle(ta);
+    if (d.style.fontFamily !== cs.fontFamily) d.style.fontFamily = cs.fontFamily;
     d.style.fontSize = cs.fontSize;
     d.style.lineHeight = cs.lineHeight;
     d.style.letterSpacing = cs.letterSpacing;
     d.style.tabSize = cs.tabSize;
-    d.style.padding = cs.padding;
-    d.textContent = this.ta.value.slice(0, pos);
-    const span = document.createElement('span');
-    span.textContent = '\u200b';
-    d.appendChild(span);
-    const r = span.getBoundingClientRect();
-    const base = d.getBoundingClientRect();
-    const cs2 = getComputedStyle(d);
-    const lh = parseFloat(cs2.lineHeight) || this.fontSize * 1.55;
+    d.textContent = v.slice(lineStart, pos);
+    const w = d.getBoundingClientRect().width;
     d.textContent = '';
-    return { x: r.left - base.left, y: r.top - base.top, lh };
+    return { x: this._padLeft + w, y: this._padTop + line * (this.lineHeight || 20), lh: this.lineHeight || 20 };
+  }
+
+  /** 测量盒：放在 #code-wrap 里（overflow: clip），量完即清空，绝不影响页面布局 */
+  _mirror() {
+    if (!this._mirrorEl) {
+      const d = document.createElement('div');
+      d.setAttribute('aria-hidden', 'true');
+      d.style.cssText = 'position:absolute;left:0;top:0;white-space:pre;visibility:hidden;' +
+        'pointer-events:none;contain:layout paint;tab-size:4;padding:0;margin:0;border:0;';
+      this.wrap.appendChild(d);
+      this._mirrorEl = d;
+    }
+    return this._mirrorEl;
   }
 
   // ── 事件绑定 ─────────────────────────
@@ -269,7 +456,7 @@ export class CodeEditor {
     ta.addEventListener('input', () => {
       const pre = this._preScroll;
       this._preScroll = null;
-      this.render();
+      this.patch();
       this.onChange();
       this.emitCaret();
       this.settleScroll(pre, true);
@@ -411,7 +598,7 @@ export class CodeEditor {
       const p = ta.selectionStart + caretOffset;
       ta.setSelectionRange(p, p);
     }
-    this.render();
+    this.patch();
     this.onChange();
     this.emitCaret();
     this.settleScroll(pre, true);
@@ -475,19 +662,29 @@ export class CodeEditor {
   showAc(manual, word) {
     const { word: w2, from } = this.wordPrefix();
     const prefix = word != null ? word : w2;
-    const items = suggestions(prefix, this.symbols, this.acMember);
+    const items = suggestions(prefix, this.syms, this.acMember);
     if (!items.length) { this.hideAc(); return; }
+    // 候选列表没变就别重建 DOM（连续打字时列表通常只是整体不变）
+    const sig = prefix + '\u0001' + this.acMember + '\u0001' + items.map((it) => it.label).join('\u0001');
+    const sameList = this.acOpen && sig === this._acSig;
     this.acItems = items;
-    this.acIndex = -1;          // 未选中：第一项只作为"预选"提示，第一下 ↓ 才落到它上面
-    this.acNavigated = false;
+    this._acSig = sig;
     this.acPrefix = prefix;
     this.acFrom = from;
     this.acOpen = true;
-    this.renderAc();
-    // 光标位置只在弹出时测一次；滚动时用缓存值重算，避免滚动里反复做 DOM 测量
-    this._acPos = this.caretContentPos();
-    this.acEl.classList.remove('hidden');
-    this.placeAc();
+    // 浮层的所有 DOM 操作都在"锁定编辑区滚动"的范围内做：
+    // WebView 布局变化后可能替我们滚 textarea，这里立刻还原，保证正在编辑的那一行不动。
+    this._lockScroll(() => {
+      if (!sameList) {
+        this.acIndex = -1;        // 未选中：第一项只作为"预选"提示，第一下 ↓ 才落到它上面
+        this.acNavigated = false;
+        this.renderAc();
+      }
+      // 光标位置只在弹出时测一次；滚动时用缓存值重算，避免滚动里反复做 DOM 测量
+      this._acPos = this.caretContentPos();
+      this.acEl.classList.remove('hidden');
+      this.placeAc();
+    });
   }
 
   /** 光标在"内容坐标"里的位置（含 padding，未扣滚动） */
@@ -563,13 +760,13 @@ export class CodeEditor {
     if (!n) return false;
     if (this.acIndex < 0) {
       this.acIndex = 0;
-      this.renderAc();
+      this._lockScroll(() => this.renderAc());
       return true;
     }
     const next = this.acIndex + d;
     if (next < 0 || next >= n) return false;
     this.acIndex = next;
-    this.renderAc();
+    this._lockScroll(() => this.renderAc());
     return true;
   }
 
@@ -638,7 +835,7 @@ export class CodeEditor {
   updateSig() {
     const ctx = this.callContext();
     if (!ctx) return this.hideSig();
-    const item = lookup(ctx.name) || this.symbols.find((s) => s.label === ctx.name);
+    const item = lookup(ctx.name) || this.syms.find((s) => s.label === ctx.name);
     if (!item) return this.hideSig();
     const sig = item.sig || '';
     const p0 = sig.indexOf('('), p1 = sig.lastIndexOf(')');
@@ -647,10 +844,12 @@ export class CodeEditor {
     const esc = (t) => t.replace(/[<>]/g, (c) => (c === '<' ? '&lt;' : '&gt;'));
     const html = '<b>' + esc(item.label) + '</b>(' +
       parts.map((p, k) => (k === ctx.idx ? '<b>' + esc(p) + '</b>' : esc(p))).join(', ') + ')';
-    this.sigEl.innerHTML = html;
-    this._sigPos = this.caretContentPos();
-    this.sigEl.classList.remove('hidden');
-    this.placeSig();
+    this._lockScroll(() => {
+      this.sigEl.innerHTML = html;
+      this._sigPos = this.caretContentPos();
+      this.sigEl.classList.remove('hidden');
+      this.placeSig();
+    });
   }
 
   placeSig() {

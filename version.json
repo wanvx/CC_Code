@@ -1,9 +1,9 @@
 {
   "name": "CC_Code",
-  "version": "1.4.0",
-  "versionCode": 9,
+  "version": "1.5.0",
+  "versionCode": 10,
   "released": "2026-10-27",
-  "notes": "修复：补全列表按下键不再跳过第一项，第一下就落在第一项\n新增：实时检查，打字时立刻标出括号没配对、语句末尾漏分号、if 里的 = 写成了赋值，设置里可开关",
+  "notes": "修复：补全弹窗出现时正在编辑的那一行不再跳动，输入输出面板开合时光标行也钉在原地（改为增量重绘，2000 行单次编辑 87ms → 22ms）\n修复：蓝牙鼠标休眠重连时误发的点击不再把输入输出面板弹出来，面板开合状态会被记住\n新增：设置里可选代码字体，系统等宽 / JetBrains Mono / Source Code Pro / 系统无衬线，前两款内置离线可用",
   "apk": "https://github.com/wanvx/CC_Code/releases/latest/download/CC_Code.apk",
   "web": "https://pocketcode-ide.app.workbuddy.host/?sharecode=S62VZQDDME"
 }
