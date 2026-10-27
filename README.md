@@ -8,6 +8,7 @@
 
 - **离线编译运行**：Clang 22 + wasm-ld + WASI 运行时全部在浏览器里跑，无后端、无上传
 - **代码编辑器**：C/C++ 语法高亮、行号与代码同行对齐、自动补全（标准库 + 项目内符号）、括号配对、缩进参考线（可开关）、Ctrl+滚轮缩放
+- **实时检查**：打字时立刻标出括号没配对、语句末尾漏分号、字面量/注释没闭合、`if (a = b)` 误用赋值；行号变色 + 问题列表 + 状态栏计数，设置里可关
 - **文件树**：单一 `root` 根目录，可无限嵌套文件夹，文件夹行内直接新建子目录 / `.cpp`，支持重命名与删除
 - **输入与输出同层**：下方面板「输出 / 输入 / 问题」三个标签页，输入按文件独立保存，点「运行」自动喂给程序
 - **cph 测评**（内置插件）：按文件保存测试点，输入 / 预期输出 / 最终输出，单点运行与全部运行，判定忽略行尾空白与末尾空行
@@ -49,6 +50,7 @@ web/                    静态站点（真正被两端共用的那套代码）
   js/app.js             应用外壳：文件树 / 标签 / 编译运行 / 设置 / 更新
   js/editor.js          编辑器：高亮渲染、补全弹窗、键盘行为
   js/complete.js        补全数据库与符号索引
+  js/lint.js            实时检查：括号配对 / 漏分号 / 字面量闭合
   js/fs.js              虚拟文件系统（localStorage）
   js/worker.js          编译执行的 Web Worker
   js/plugins.js         插件内核
@@ -95,6 +97,8 @@ version.json            版本号，供 app 内「检查更新」读取
 node server.mjs &          # 需要先起静态服务器
 node tests/v3-stdin.mjs    # stdin 输入 / 补全关闭 / 关于与更新
 node tests/v5-ac-panel-guides.mjs   # 补全浮层跟随 / 三 tab 面板 / 缩进参考线
+node tests/v7-ac-first-lint.mjs     # 补全首项选择 / 实时检查
+node tests/lint-unit.mjs            # 实时检查规则单测（无需浏览器）
 node tests/v2-smoke.mjs    # 文件树 / 编译 / cph / 设置
 node tests/inline-ln.mjs   # 行号与代码对齐回归
 ```
