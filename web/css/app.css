@@ -219,7 +219,10 @@ svg.fill { fill: currentColor; stroke: none; }
 
 #editor-body { flex: 1 1 auto; display: flex; min-height: 0; overflow: hidden; }
 /* 行号内嵌在代码行内（与代码共享同一行盒），不存在独立列，物理上不可能错位 */
-#code-wrap { flex: 1 1 auto; position: relative; overflow: hidden; min-width: 0; }
+/* overflow:clip 让这一层彻底不是滚动容器：WebView 在回车/撤销后做的
+   "reveal caret" 会去滚最近的滚动祖先，会把整块代码视图顶走（表现为跳到末尾）。
+   clip 不支持时退回 hidden（旧内核）。 */
+#code-wrap { flex: 1 1 auto; position: relative; overflow: hidden; overflow: clip; min-width: 0; }
 #hl, #ta {
   position: absolute; top: 0; left: 0;
   margin: 0; border: 0;

@@ -39,6 +39,10 @@ export class CodeEditor {
   get value() { return this.ta.value; }
   setValue(v, silent) {
     this.ta.value = v;
+    // 换文件时回到顶部（否则沿用上一个文件的滚动位置，看起来像跳到了中间/末尾）
+    this.ta.scrollTop = 0;
+    this.ta.scrollLeft = 0;
+    this._lastX = -1;
     this.render();
     if (!silent) this.onChange();
     this.emitCaret();
@@ -53,6 +57,7 @@ export class CodeEditor {
     this.lineHeight = Math.round(this.fontSize * 1.55);
     document.documentElement.style.setProperty('--code-fs', this.fontSize + 'px');
     document.documentElement.style.setProperty('--code-lh', this.lineHeight + 'px');
+    this._padTop = null;
     this.syncScroll();
     return this.fontSize;
   }
@@ -90,6 +95,50 @@ export class CodeEditor {
       this._lastX = x;
       this.hlEl.style.setProperty('--sx', x + 'px');
     }
+    // 兜底：外层容器一旦被引擎"reveal caret"滚动过，代码视图就整块错位
+    const w = this.wrap;
+    if (w.scrollTop !== 0) w.scrollTop = 0;
+    if (w.scrollLeft !== 0) w.scrollLeft = 0;
+  }
+
+  /**
+   * 内容变化后的滚动收尾。
+   * Android WebView 在「回车换行」「Ctrl+Z 撤销」时会把 textarea 滚到整个文件末尾
+   * （模拟器实测 scrollTop 直接跳到 max），用户看到的就是"窗口跳到代码尾巴"。
+   * 策略：先把变化前的滚动位置原样恢复，再只做「保证光标可见」的最小修正。
+   * @param {{y:number,x:number}|null} pre 变化前记录的滚动位置
+   * @param {boolean} force true=无条件恢复；false=只在出现极端跳变（跑到顶/底）时恢复
+   */
+  settleScroll(pre, force) {
+    const ta = this.ta;
+    if (pre) {
+      const max = Math.max(0, ta.scrollHeight - ta.clientHeight);
+      const extreme = (ta.scrollTop === 0 && pre.y > 4) || (max > 0 && ta.scrollTop >= max - 1 && pre.y < max - 4);
+      if (force || extreme) {
+        ta.scrollLeft = pre.x;
+        ta.scrollTop = pre.y;
+      }
+    }
+    this.ensureCaretVisible();
+  }
+
+  /**
+   * 光标可见性兜底（最后一道不变量）：内容变化后光标必须留在视口内，
+   * 且只在光标真的跑出视口时才滚动，幅度最小，不干扰正常翻页。
+   */
+  ensureCaretVisible() {
+    const ta = this.ta;
+    const lh = this.lineHeight || 20;
+    if (this._padTop == null) this._padTop = parseFloat(getComputedStyle(ta).paddingTop) || 8;
+    const v = ta.value;
+    let line = 0;
+    for (let i = ta.selectionStart - 1; i >= 0; i--) if (v.charCodeAt(i) === 10) line++;
+    const y = this._padTop + line * lh;   // 本行在内容坐标里的顶边（wrap=off，无软换行）
+    const viewH = ta.clientHeight;
+    const top = ta.scrollTop;
+    if (y < top) ta.scrollTop = Math.max(0, y - lh);
+    else if (y + lh > top + viewH) ta.scrollTop = Math.max(0, y + lh * 2 - viewH);
+    this.syncScroll();
   }
 
   // ── 诊断 ─────────────────────────────
@@ -161,10 +210,24 @@ export class CodeEditor {
   _bind() {
     const ta = this.ta;
     ta.addEventListener('scroll', () => this.syncScroll(), { passive: true });
+    // 记录变化前的滚动位置：回车 / 撤销后 WebView 会把 textarea 滚到文件末尾
+    ta.addEventListener('beforeinput', () => {
+      this._preScroll = { y: ta.scrollTop, x: ta.scrollLeft };
+    });
     ta.addEventListener('input', () => {
+      const pre = this._preScroll;
+      this._preScroll = null;
       this.render();
       this.onChange();
       this.emitCaret();
+      this.settleScroll(pre, true);
+      // WebView 的滚动修正有时发生在 input 之后（布局完成后），下一帧再兜一次，
+      // 这时只在真的跑到顶/底才恢复，避免干扰用户正常滚动
+      if (this._caretRaf) cancelAnimationFrame(this._caretRaf);
+      this._caretRaf = requestAnimationFrame(() => {
+        this._caretRaf = 0;
+        this.settleScroll(pre, false);
+      });
       this.updateAutocomplete();
       this.updateSig();
     });
@@ -285,6 +348,7 @@ export class CodeEditor {
   // 通过 execCommand 插入以保留原生撤销栈
   insert(text, caretOffset) {
     const ta = this.ta;
+    const pre = { y: ta.scrollTop, x: ta.scrollLeft };
     const ok = document.execCommand && document.execCommand('insertText', false, text);
     if (!ok) {
       const s = ta.selectionStart, e = ta.selectionEnd;
@@ -298,6 +362,7 @@ export class CodeEditor {
     this.render();
     this.onChange();
     this.emitCaret();
+    this.settleScroll(pre, true);
   }
 
   indentSelection(outdent) {
@@ -391,7 +456,13 @@ export class CodeEditor {
     }).join('');
     this.acEl.innerHTML = html + '<div class="ac-close" title="关闭补全">✕</div>';
     const sel = this.acEl.querySelector('.ac-item.sel');
-    if (sel) sel.scrollIntoView({ block: 'nearest' });
+    // 不用 scrollIntoView：它会连带滚动所有可滚动祖先（会顶走代码视图），只滚弹窗自己
+    if (sel) {
+      const top = sel.offsetTop, bottom = top + sel.offsetHeight;
+      const box = this.acEl;
+      if (top < box.scrollTop) box.scrollTop = top;
+      else if (bottom > box.scrollTop + box.clientHeight) box.scrollTop = bottom - box.clientHeight;
+    }
   }
 
   /** @returns {boolean} false 表示已到边界（调用方据此关闭补全） */

@@ -1,9 +1,9 @@
 {
   "name": "CC_Code",
-  "version": "1.2.0",
-  "versionCode": 6,
+  "version": "1.2.1",
+  "versionCode": 7,
   "released": "2026-10-27",
-  "notes": "新增：编辑器下方可直接输入 stdin，按文件独立保存\n补全弹窗按左右键即可关闭，上下键到头自动收起\n新增 GitHub 项目地址与检查更新",
+  "notes": "修复：符号后按回车、Ctrl+Z 撤销时光标窗口跳到文件末尾/开头\n修复：切换文件后沿用上一个文件的滚动位置\n编辑器外层改为不可滚动，杜绝引擎 reveal-caret 顶走代码视图",
   "apk": "https://github.com/wanvx/CC_Code/releases/latest/download/CC_Code.apk",
   "web": "https://pocketcode-ide.app.workbuddy.host/?sharecode=S62VZQDDME"
 }
