@@ -1,0 +1,19 @@
+{
+  "name": "cc-code",
+  "version": "1.2.0",
+  "private": true,
+  "type": "module",
+  "description": "手机上的 C/C++ IDE：本地 WASM Clang 离线编译运行",
+  "license": "MIT",
+  "scripts": {
+    "setup:clang": "node tools/setup-clang.mjs",
+    "start": "node server.mjs",
+    "test": "node tests/v3-stdin.mjs"
+  },
+  "dependencies": {
+    "@live-codes/clang-wasm": "^0.3.0"
+  },
+  "devDependencies": {
+    "playwright": "^1.64.1"
+  }
+}

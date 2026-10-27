@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="theme-color" content="#14161c">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="CC_Code">
+<title>CC_Code · C/C++ 手机 IDE</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+<div id="app">
+  <header id="titlebar">
+    <button id="btn-drawer" class="icon-btn" title="资源管理器" aria-label="资源管理器">
+      <svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+    </button>
+    <div id="title-file">main.cpp</div>
+    <span id="title-dirty" class="dirty hidden">●</span>
+    <div class="spacer"></div>
+    <button id="btn-export" class="icon-btn" title="导出当前文件" aria-label="导出当前文件">
+      <svg viewBox="0 0 24 24"><path d="M12 3.5v10M8 10l4 4 4-4M4.5 16.5v2.6h15v-2.6"/></svg>
+    </button>
+    <button id="btn-run" class="run-btn" title="编译并运行">
+      <svg viewBox="0 0 24 24" class="fill"><path d="M8 5.5v13l11-6.5z"/></svg>
+      <span>运行</span>
+    </button>
+  </header>
+
+  <div id="workspace">
+    <nav id="rail">
+      <button class="rail-btn active" data-view="files" title="资源管理器" aria-label="资源管理器">
+        <svg viewBox="0 0 24 24"><path d="M3 6.5A1.5 1.5 0 0 1 4.5 5h4l2 2.5h9A1.5 1.5 0 0 1 21 9v9.5A1.5 1.5 0 0 1 19.5 20h-15A1.5 1.5 0 0 1 3 18.5z"/></svg>
+      </button>
+      <div class="rail-sep"></div>
+      <div id="plugin-rail"></div>
+      <div class="spacer"></div>
+      <button class="rail-btn" id="btn-settings" title="设置" aria-label="设置">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.2"/><path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-2.7 1.1V21a2 2 0 1 1-4 0v-.1A1.6 1.6 0 0 0 7 19.4a1.6 1.6 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0-1.1-2.7H1a2 2 0 1 1 0-4h.1A1.6 1.6 0 0 0 2.6 7a1.6 1.6 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1A1.6 1.6 0 0 0 7 2.6h.1A1.6 1.6 0 0 0 8.2 1V1a2 2 0 1 1 4 0v.1A1.6 1.6 0 0 0 15 2.6c.6.2 1.3.1 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0-.3 1.8v.1a1.6 1.6 0 0 0 1.5 1h.1a2 2 0 1 1 0 4H21a1.6 1.6 0 0 0-1.6 1z" transform="translate(1.5 1.5) scale(0.9)"/></svg>
+      </button>
+    </nav>
+
+    <aside id="sidebar">
+      <div class="side-head">
+        <span id="side-title">资源管理器</span>
+        <div class="spacer"></div>
+        <button id="side-close" class="mini-btn" title="收起">✕</button>
+      </div>
+      <div id="side-body">
+        <div id="view-files" class="side-view">
+          <div id="filetree" class="tree"></div>
+        </div>
+        <div id="view-plugin" class="side-view"></div>
+      </div>
+    </aside>
+
+    <section id="editor-area">
+      <div id="tabs"></div>
+      <div id="editor-body">
+        <div id="code-wrap">
+          <pre id="hl" aria-hidden="true"><code id="hl-code"></code></pre>
+          <textarea id="ta" spellcheck="false" autocapitalize="off" autocomplete="off" autocorrect="off" wrap="off" aria-label="代码编辑器"></textarea>
+        </div>
+      </div>
+
+      <div id="panel">
+        <div class="panel-head">
+          <button class="panel-tab active" data-tab="output">输出</button>
+          <button class="panel-tab" data-tab="problems">问题 <span id="problem-count" class="chip">0</span></button>
+          <div class="spacer"></div>
+          <button id="btn-clear" class="mini-btn" title="清空">清空</button>
+          <button id="panel-toggle" class="mini-btn" title="收起/展开">▾</button>
+        </div>
+        <div id="panel-body">
+          <pre id="terminal" class="pane active"></pre>
+          <div id="problems" class="pane"></div>
+        </div>
+        <div id="stdin-box">
+          <div class="stdin-head">
+            <span class="stdin-title">输入</span>
+            <span id="stdin-meta" class="stdin-meta">空</span>
+            <div class="spacer"></div>
+            <button id="stdin-clear" class="mini-btn" title="清空输入" aria-label="清空输入">✕</button>
+            <button id="stdin-fold" class="mini-btn" title="收起/展开输入区" aria-label="收起输入区">▾</button>
+          </div>
+          <textarea id="stdin-ta" spellcheck="false" autocapitalize="off" autocomplete="off" autocorrect="off" placeholder="在这里输入程序要读的数据，点「运行」时自动喂进去"></textarea>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <footer id="statusbar">
+    <span id="st-pos">行 1, 列 1</span>
+    <span class="divider"></span>
+    <span id="st-lang">C++</span>
+    <span class="divider"></span>
+    <span id="st-std">gnu++17</span>
+    <div class="spacer"></div>
+    <button id="font-dec" class="st-btn" title="缩小">A－</button>
+    <span id="st-font" class="st-font">13</span>
+    <button id="font-inc" class="st-btn" title="放大">A＋</button>
+    <span class="divider"></span>
+    <span id="st-status" class="st-status">就绪</span>
+    <span id="st-net" class="st-net" title="本地编译器">离线</span>
+  </footer>
+</div>
+
+<div id="ac" class="popup hidden" role="listbox"></div>
+<div id="sig" class="sig hidden"></div>
+<div id="mask" class="hidden"></div>
+
+<div id="modal" class="hidden">
+  <div class="modal-card">
+    <div class="modal-head"><h2 id="modal-title">设置</h2><button id="modal-close" class="icon-btn">✕</button></div>
+    <div class="modal-body" id="modal-body"></div>
+    <div class="modal-foot" id="modal-foot"></div>
+  </div>
+</div>
+
+<div id="toast" class="toast hidden"></div>
+<input id="file-pick" type="file" class="hidden" accept=".json,.txt,application/json">
+<script type="module" src="js/app.js"></script>
+</body>
+</html>

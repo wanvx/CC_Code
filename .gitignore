@@ -1,0 +1,18 @@
+node_modules/
+shots/
+*.log
+
+# 编译器资源（28MB，用 npm run setup:clang 生成）
+web/clang/bin/
+
+# Android
+android/local.properties
+android/.gradle/
+android/build/
+android/app/build/
+*.apk
+.gradle/
+
+# 系统
+.DS_Store
+Thumbs.db
