@@ -14,8 +14,11 @@ const REPO_OWNER = 'wanvx';
 const REPO_NAME = 'CC_Code';
 const REPO_URL = 'https://github.com/' + REPO_OWNER + '/' + REPO_NAME;
 const AUTHOR_URL = 'https://github.com/' + REPO_OWNER;
-const RAW_BASE = 'https://raw.githubusercontent.com/' + REPO_OWNER + '/' + REPO_NAME + '/main/';
-const VERSION_URL = RAW_BASE + 'version.json';
+const VERSION_SOURCES = [
+  'https://raw.githubusercontent.com/' + REPO_OWNER + '/' + REPO_NAME + '/main/version.json',
+  'https://cdn.jsdelivr.net/gh/' + REPO_OWNER + '/' + REPO_NAME + '@main/version.json',
+  'https://api.github.com/repos/' + REPO_OWNER + '/' + REPO_NAME + '/contents/version.json'
+];
 const UPDATE_SEEN_KEY = 'cccode.update.seen';
 
 const SETTINGS_KEY = 'pocketcode.settings.v2';
@@ -160,10 +163,29 @@ function openExternal(url) {
   if (!w) location.href = url;
 }
 
+/** 依次尝试 raw / jsDelivr / API 三个源，哪个通用哪个（网络环境差异较大） */
 async function fetchUpdateInfo() {
-  const res = await fetch(VERSION_URL + '?t=' + Date.now(), { cache: 'no-store' });
-  if (!res.ok) throw new Error('HTTP ' + res.status);
-  return res.json();
+  let lastErr = null;
+  for (const src of VERSION_SOURCES) {
+    try {
+      const isApi = src.includes('api.github.com');
+      const res = await fetch(src + (isApi ? '' : '?t=' + Date.now()), { cache: 'no-store' });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const data = await res.json();
+      if (isApi) {
+        // contents 接口把文件内容 base64 包在 content 字段里
+        const b64 = String(data.content || '').replace(/\s/g, '');
+        if (!b64) throw new Error('empty content');
+        const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+        return JSON.parse(new TextDecoder().decode(bytes));
+      }
+      if (data && data.versionCode != null) return data;
+      throw new Error('bad payload');
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+  throw lastErr || new Error('unreachable');
 }
 
 async function checkUpdate(manual) {
