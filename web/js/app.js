@@ -8,8 +8,8 @@ const $ = (s) => document.querySelector(s);
 
 // ── 应用信息（检查更新用，发版时同步 version.json） ──
 const APP_NAME = 'CC_Code';
-const APP_VERSION = '1.2.1';
-const APP_VERSION_CODE = 7;
+const APP_VERSION = '1.3.0';
+const APP_VERSION_CODE = 8;
 const REPO_OWNER = 'wanvx';
 const REPO_NAME = 'CC_Code';
 const REPO_URL = 'https://github.com/' + REPO_OWNER + '/' + REPO_NAME;
@@ -28,6 +28,7 @@ const DEFAULTS = {
   stdCpp: 'gnu++17',
   args: '-Wall',
   fontSize: 13,
+  indentGuides: true,
   stdin: '',
   prefillOn: false,
   prefillText: '#include <cstdio>\n\nint main() {\n    \n    return 0;\n}\n'
@@ -60,6 +61,7 @@ function loadSettings() {
   }
   if (typeof state.settings.prefillOn !== 'boolean') state.settings.prefillOn = DEFAULTS.prefillOn;
   if (typeof state.settings.prefillText !== 'string') state.settings.prefillText = DEFAULTS.prefillText;
+  if (typeof state.settings.indentGuides !== 'boolean') state.settings.indentGuides = DEFAULTS.indentGuides;
 }
 function saveSettings() {
   try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(state.settings)); } catch (e) { /* 忽略 */ }
@@ -125,15 +127,21 @@ function syncStdinBox(path) {
 }
 
 function updateStdinMeta() {
-  const el = $('#stdin-meta');
-  if (!el) return;
+  const dot = $('#stdin-dot');
+  const tab = document.querySelector('.panel-tab[data-tab="stdin"]');
   const path = state.active;
-  if (!path || !isRunnable(path)) { el.textContent = '仅 .c/.cpp 可用'; return; }
-  const v = stdinFor(path);
-  if (!v) { el.textContent = '空'; return; }
-  const lines = v.split(/\r?\n/).length;
-  const bytes = new TextEncoder().encode(v).length;
-  el.textContent = lines + ' 行 · ' + (bytes < 1024 ? bytes + ' B' : (bytes / 1024).toFixed(1) + ' KB');
+  const runnable = !!path && isRunnable(path);
+  const v = runnable ? stdinFor(path) : '';
+  if (dot) dot.classList.toggle('hidden', !v);
+  if (tab) {
+    if (!runnable) tab.title = '输入（仅 .c/.cpp 可用）';
+    else if (!v) tab.title = '输入：空';
+    else {
+      const bytes = new TextEncoder().encode(v).length;
+      tab.title = '输入：' + v.split(/\r?\n/).length + ' 行 · ' + (bytes < 1024 ? bytes + ' B' : (bytes / 1024).toFixed(1) + ' KB');
+    }
+    tab.classList.toggle('dim', !runnable);
+  }
 }
 
 function toast(msg, ms = 1900) {
@@ -729,9 +737,13 @@ function showPanel(tab) {
   $('#panel').classList.remove('collapsed');
   switchPanelTab(tab || 'output');
 }
+const PANE_OF = { output: 'terminal', stdin: 'stdin-pane', problems: 'problems' };
+let panelTab = 'output';
 function switchPanelTab(tab) {
+  if (!PANE_OF[tab]) tab = 'output';
+  panelTab = tab;
   document.querySelectorAll('.panel-tab').forEach((b) => b.classList.toggle('active', b.dataset.tab === tab));
-  document.querySelectorAll('.pane').forEach((p) => p.classList.toggle('active', p.id === (tab === 'problems' ? 'problems' : 'terminal')));
+  document.querySelectorAll('.pane').forEach((p) => p.classList.toggle('active', p.id === PANE_OF[tab]));
 }
 
 // ── 导出 ───────────────────────────────
@@ -884,12 +896,15 @@ function settingsBody() {
   const fileCount = state.vfs.paths().length;
 
   return '<div class="field"><label>主题</label>' + seg('seg-theme', ['dark', 'light'], s.theme, (v) => (v === 'dark' ? '深色' : '浅色')) + '</div>' +
+    '<div class="field"><div class="row-between"><label style="margin:0">缩进参考线</label>' +
+      '<button class="switch' + (s.indentGuides ? ' on' : '') + '" id="m-guides"></button></div>' +
+      '<div class="hint">用灰色虚线标出每一级缩进的位置，嵌套层级一眼看清。</div></div>' +
     '<div class="field"><label>C 标准</label>' + seg('seg-stdc', VALID_STD.stdC, s.stdC) + '</div>' +
     '<div class="field"><label>C++ 标准</label>' + seg('seg-stdcpp', VALID_STD.stdCpp, s.stdCpp) + '</div>' +
     '<div class="field"><label>编译参数</label><input id="m-args" type="text" value="' + escapeHtml(s.args) + '">' +
       '<div class="hint">例如 -Wall -O2 -Wextra</div></div>' +
     '<div class="field"><label>标准输入</label>' +
-      '<div class="hint">输入数据直接在编辑器下方的「输入」框里填写，按文件独立保存，点「运行」自动传入。</div></div>' +
+      '<div class="hint">输入数据在下方面板的「输入」标签页里填写，按文件独立保存，点「运行」自动传入。</div></div>' +
 
     '<div class="sec-title">新建文件</div>' +
     '<div class="field"><div class="row-between"><label style="margin:0">预填入内容</label>' +
@@ -937,6 +952,13 @@ function settingsModal() {
   bindSeg('seg-stdcpp', 'stdCpp');
 
   $('#m-args').addEventListener('input', (e) => { s.args = e.target.value; saveSettings(); });
+
+  $('#m-guides').addEventListener('click', (e) => {
+    s.indentGuides = !s.indentGuides;
+    e.currentTarget.classList.toggle('on', s.indentGuides);
+    editor.setIndentGuides(s.indentGuides);
+    saveSettings();
+  });
 
   $('#m-prefill-on').addEventListener('click', (e) => {
     s.prefillOn = !s.prefillOn;
@@ -1007,6 +1029,7 @@ function settingsModal() {
 function applySettings() {
   document.documentElement.dataset.theme = state.settings.theme;
   editor.setFontSize(state.settings.fontSize);
+  editor.setIndentGuides(state.settings.indentGuides);
   $('#st-font').textContent = editor.fontSize;
   const lang = state.active ? langOf(state.active) : 'cpp';
   $('#st-std').textContent = lang === 'c' ? state.settings.stdC : lang === 'cpp' ? state.settings.stdCpp : '—';
@@ -1060,6 +1083,7 @@ function init() {
 
   document.documentElement.dataset.theme = state.settings.theme;
   editor.setFontSize(state.settings.fontSize);
+  editor.setIndentGuides(state.settings.indentGuides);
   $('#st-font').textContent = editor.fontSize;
 
   renderTree();
@@ -1072,7 +1096,7 @@ function init() {
 
   setStatus('就绪', '');
   termLine(APP_NAME + ' v' + APP_VERSION + ' · 本地 Clang 22 (WASM) · 完全离线编译', 't-dim');
-  termLine('输入数据写在编辑器下方的输入框里；测题用左栏的 cph 插件。', 't-dim');
+  termLine('输入数据写在下方面板的「输入」标签页；测题用左栏的 cph 插件。', 't-dim');
   scheduleUpdateCheck();
 
   bindTree();
@@ -1094,17 +1118,27 @@ function init() {
   $('#modal-close').addEventListener('click', closeModal);
   $('#modal').addEventListener('click', (e) => { if (e.target.id === 'modal') closeModal(); });
   $('#panel-toggle').addEventListener('click', () => $('#panel').classList.toggle('collapsed'));
-  $('#btn-clear').addEventListener('click', termClear);
+  // 「清空」按当前 tab 走：输出清终端，输入清输入框，问题不处理
+  $('#btn-clear').addEventListener('click', () => {
+    if (panelTab === 'stdin') {
+      const sTa = $('#stdin-ta');
+      sTa.value = '';
+      setStdinFor(state.active, '');
+      updateStdinMeta();
+      sTa.focus();
+      toast('已清空输入');
+      return;
+    }
+    termClear();
+  });
 
   const sTa = $('#stdin-ta');
   sTa.addEventListener('input', () => setStdinFor(state.active, sTa.value));
-  $('#stdin-clear').addEventListener('click', () => {
-    sTa.value = '';
-    setStdinFor(state.active, '');
-    updateStdinMeta();
-  });
-  $('#stdin-fold').addEventListener('click', () => $('#stdin-box').classList.toggle('folded'));
-  document.querySelectorAll('.panel-tab').forEach((b) => b.addEventListener('click', () => switchPanelTab(b.dataset.tab)));
+  document.querySelectorAll('.panel-tab').forEach((b) => b.addEventListener('click', () => {
+    $('#panel').classList.remove('collapsed');
+    switchPanelTab(b.dataset.tab);
+    if (b.dataset.tab === 'stdin' && state.active && isRunnable(state.active)) setTimeout(() => sTa.focus(), 0);
+  }));
 
   $('#plugin-rail').addEventListener('click', (e) => {
     const b = e.target.closest('[data-plug]');

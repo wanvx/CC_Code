@@ -26,6 +26,7 @@
   --tk-pre: #82aaff;   /* 预处理 */
   --tk-fn: #82d8a0;    /* 函数名 */
   --tk-punc: #98a4b8;
+  --guide: #2c3342;    /* 缩进参考线 */
 }
 :root[data-theme="light"] {
   --bg: #ffffff;
@@ -46,6 +47,7 @@
   --tk-pre: #2f6fe4;
   --tk-fn: #1a7f52;
   --tk-punc: #4a5464;
+  --guide: #dde1e8;
 }
 
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
@@ -217,7 +219,7 @@ svg.fill { fill: currentColor; stroke: none; }
 .tab .t-close:active { background: var(--bg-4); color: var(--fg); }
 .tab .t-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); }
 
-#editor-body { flex: 1 1 auto; display: flex; min-height: 0; overflow: hidden; }
+#editor-body { flex: 1 1 auto; display: flex; min-height: 0; overflow: hidden; position: relative; }
 /* 行号内嵌在代码行内（与代码共享同一行盒），不存在独立列，物理上不可能错位 */
 /* overflow:clip 让这一层彻底不是滚动容器：WebView 在回车/撤销后做的
    "reveal caret" 会去滚最近的滚动祖先，会把整块代码视图顶走（表现为跳到末尾）。
@@ -238,10 +240,22 @@ svg.fill { fill: currentColor; stroke: none; }
 #hl code { display: block; font: inherit; white-space: pre; }
 /* 每行 = 一条 flex 行：行号固定列 + 代码裁剪列，基线对齐，垂直永不累积错位 */
 #hl .cl {
+  position: relative;
   display: flex;
   align-items: baseline;
   min-height: var(--code-lh);
   line-height: var(--code-lh);
+  overflow: hidden;
+}
+/* 缩进参考线：每行一条绝对定位的竖虚线，只覆盖该行实际缩进宽度。
+   横向滚动时跟着代码一起平移（--sx 由 JS 同步）。 */
+#hl .gi {
+  position: absolute; left: calc(var(--ln-pad) * 1ch); top: 0; height: 100%;
+  transform: translateX(calc(-1 * var(--sx, 0px)));
+  pointer-events: none;
+  background-image: repeating-linear-gradient(to right, var(--guide) 0 1px, transparent 1px 4ch);
+  -webkit-mask-image: repeating-linear-gradient(to bottom, #000 0 3px, transparent 3px 8px);
+  mask-image: repeating-linear-gradient(to bottom, #000 0 3px, transparent 3px 8px);
 }
 #hl .ln {
   flex: 0 0 auto;
@@ -289,8 +303,7 @@ svg.fill { fill: currentColor; stroke: none; }
   background: var(--bg-2); border-top: 1px solid var(--line);
 }
 #panel.collapsed { height: 34px !important; min-height: 34px; }
-#panel.collapsed #panel-body,
-#panel.collapsed #stdin-box { display: none; }
+#panel.collapsed #panel-body { display: none; }
 #panel.collapsed #panel-toggle { transform: rotate(180deg); }
 .panel-head { display: flex; align-items: center; gap: 2px; padding: 0 6px; height: 34px; flex: 0 0 34px; }
 .panel-tab {
@@ -298,6 +311,7 @@ svg.fill { fill: currentColor; stroke: none; }
   letter-spacing: .4px; position: relative;
 }
 .panel-tab.active { color: var(--fg); }
+.panel-tab.dim { opacity: .45; }
 .panel-tab.active::after { content: ""; position: absolute; left: 6px; right: 6px; bottom: 0; height: 2px; background: var(--accent); }
 .chip {
   display: inline-block; min-width: 16px; padding: 0 4px; height: 15px; line-height: 15px;
@@ -306,36 +320,21 @@ svg.fill { fill: currentColor; stroke: none; }
 .chip.has { background: var(--err); color: #fff; }
 #panel-body { flex: 1; min-height: 0; position: relative; }
 
-/* ── 面板内 stdin 输入区 ───────────────── */
-#stdin-box {
-  flex: 0 0 auto; display: flex; flex-direction: column;
-  border-top: 1px solid var(--line); background: var(--bg-3);
-}
-.stdin-head {
-  display: flex; align-items: center; gap: 6px;
-  height: 26px; flex: 0 0 26px; padding: 0 6px 0 12px;
-}
-.stdin-title {
-  font-size: 10.5px; font-weight: 700; letter-spacing: .8px;
-  text-transform: uppercase; color: var(--fg-dim);
-}
-.stdin-meta { font-size: 10.5px; color: var(--fg-faint); }
-.std-in-btn {
-  width: 24px; height: 24px; border-radius: 6px; display: grid; place-items: center;
-  color: var(--fg-faint); font-size: 13px;
-}
-.std-in-btn:active { background: var(--bg-4); color: var(--fg); }
+/* ── 面板内 stdin 输入区（与输出同层的 tab 页） ── */
+#stdin-pane { padding: 0; }
 #stdin-ta {
-  height: 76px; flex: 0 0 auto; resize: none; display: block;
-  border: 0; background: transparent; color: var(--fg);
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  resize: none; display: block; border: 0; background: transparent; color: var(--fg);
   font-family: var(--mono); font-size: 12px; line-height: 1.55;
-  padding: 1px 12px 8px; outline: none;
+  padding: 8px 12px 14px; outline: none;
   -webkit-user-select: text; user-select: text;
 }
 #stdin-ta::placeholder { color: var(--fg-faint); }
-#stdin-box.folded #stdin-ta { display: none; }
-#stdin-box.folded #stdin-fold { transform: rotate(180deg); }
-#stdin-box:focus-within { box-shadow: inset 0 1px 0 var(--accent); }
+#stdin-ta:disabled { opacity: .55; }
+.tab-dot {
+  display: inline-block; width: 5px; height: 5px; border-radius: 50%;
+  background: var(--accent); margin-left: 4px; vertical-align: 1px;
+}
 
 .pane { display: none; position: absolute; inset: 0; overflow: auto; }
 .pane.active { display: block; }
@@ -381,8 +380,10 @@ svg.fill { fill: currentColor; stroke: none; }
 .st-net { color: var(--ok); font-size: 10px; padding: 0 4px; }
 
 /* ── 补全 / 签名 ──────────────────────── */
+/* 锚在 #editor-body 内（不是 fixed）：位置由编辑器自己算，随代码滚动同步，
+   不会因为软键盘弹出/视口平移而漂到别处。 */
 .popup {
-  position: fixed; z-index: 60;
+  position: absolute; z-index: 60;
   background: var(--bg-3); border: 1px solid var(--line);
   border-radius: 10px; box-shadow: 0 12px 32px rgba(0,0,0,.45);
   overflow: hidden; max-height: 220px; overflow-y: auto;
@@ -416,11 +417,12 @@ svg.fill { fill: currentColor; stroke: none; }
 }
 .ac-close:active { color: var(--fg); }
 .sig {
-  position: fixed; z-index: 60;
+  position: absolute; z-index: 60;
   background: var(--bg-3); border: 1px solid var(--line); border-radius: 9px;
   padding: 5px 9px; font-family: var(--mono); font-size: 11.5px;
   color: var(--fg-dim); box-shadow: 0 8px 22px rgba(0,0,0,.4);
-  max-width: 92vw; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  max-width: 92%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  pointer-events: none;
 }
 .sig b { color: var(--fg); font-weight: 600; }
 

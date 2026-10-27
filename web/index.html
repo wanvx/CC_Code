@@ -65,29 +65,25 @@
           <pre id="hl" aria-hidden="true"><code id="hl-code"></code></pre>
           <textarea id="ta" spellcheck="false" autocapitalize="off" autocomplete="off" autocorrect="off" wrap="off" aria-label="代码编辑器"></textarea>
         </div>
+        <div id="ac" class="popup hidden" role="listbox"></div>
+        <div id="sig" class="sig hidden"></div>
       </div>
 
       <div id="panel">
         <div class="panel-head">
           <button class="panel-tab active" data-tab="output">输出</button>
+          <button class="panel-tab" data-tab="stdin">输入<span id="stdin-dot" class="tab-dot hidden"></span></button>
           <button class="panel-tab" data-tab="problems">问题 <span id="problem-count" class="chip">0</span></button>
           <div class="spacer"></div>
-          <button id="btn-clear" class="mini-btn" title="清空">清空</button>
+          <button id="btn-clear" class="mini-btn" title="清空当前面板">清空</button>
           <button id="panel-toggle" class="mini-btn" title="收起/展开">▾</button>
         </div>
         <div id="panel-body">
           <pre id="terminal" class="pane active"></pre>
-          <div id="problems" class="pane"></div>
-        </div>
-        <div id="stdin-box">
-          <div class="stdin-head">
-            <span class="stdin-title">输入</span>
-            <span id="stdin-meta" class="stdin-meta">空</span>
-            <div class="spacer"></div>
-            <button id="stdin-clear" class="mini-btn" title="清空输入" aria-label="清空输入">✕</button>
-            <button id="stdin-fold" class="mini-btn" title="收起/展开输入区" aria-label="收起输入区">▾</button>
+          <div id="stdin-pane" class="pane">
+            <textarea id="stdin-ta" spellcheck="false" autocapitalize="off" autocomplete="off" autocorrect="off" placeholder="在这里输入程序要读的数据，点「运行」时自动喂进去"></textarea>
           </div>
-          <textarea id="stdin-ta" spellcheck="false" autocapitalize="off" autocomplete="off" autocorrect="off" placeholder="在这里输入程序要读的数据，点「运行」时自动喂进去"></textarea>
+          <div id="problems" class="pane"></div>
         </div>
       </div>
     </section>
@@ -109,8 +105,6 @@
   </footer>
 </div>
 
-<div id="ac" class="popup hidden" role="listbox"></div>
-<div id="sig" class="sig hidden"></div>
 <div id="mask" class="hidden"></div>
 
 <div id="modal" class="hidden">

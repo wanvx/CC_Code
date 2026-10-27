@@ -5,6 +5,20 @@ import { suggestions, snippetFor, lookup, extractSymbols } from './complete.js';
 const PAIRS = { '(': ')', '[': ']', '{': '}', '"': '"', "'": "'" };
 const CLOSERS = new Set([')', ']', '}']);
 const INDENT = '    ';
+const MAX_GUIDES = 16;
+
+/** 一行前导空白 = 几个缩进层级（空格 1 列，Tab 补到 4 的整数倍） */
+function indentLevels(line) {
+  let cols = 0;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (c === ' ') cols++;
+    else if (c === '\t') cols += 4 - (cols % 4);
+    else break;
+  }
+  const n = Math.ceil(cols / 4);
+  return n > MAX_GUIDES ? MAX_GUIDES : n;
+}
 
 export class CodeEditor {
   constructor({ ta, hlCode, codeWrap, acEl, sigEl, onChange, onCaret, onRun, onSave }) {
@@ -14,6 +28,9 @@ export class CodeEditor {
     this.wrap = codeWrap;
     this.acEl = acEl;
     this.sigEl = sigEl;
+    // 浮层锚在编辑区容器里（绝对定位），位置由编辑器算，不依赖视口坐标
+    this.host = (acEl && acEl.parentElement) || codeWrap.parentElement;
+    this.guides = true;
     this.onChange = onChange || (() => {});
     this.onCaret = onCaret || (() => {});
     this.onRun = onRun || (() => {});
@@ -75,16 +92,31 @@ export class CodeEditor {
     // 行号占位 = 位数 + 2 个空格间隔；#ta 的 padding-left 用同一变量，输入层与显示层水平对齐
     document.documentElement.style.setProperty('--ln-pad', String(digits + 2));
 
+    const raw = this.guides ? v.split('\n') : null;
     let html = '';
     for (let i = 0; i < total; i++) {
       const sev = this.diags.get(i + 1);
-      html += '<div class="cl' + (sev === 'error' ? ' err' : sev === 'warning' ? ' warn' : '') + '">' +
+      let gi = '';
+      if (raw) {
+        const n = indentLevels(raw[i] || '');
+        // 只画到本行实际缩进宽度，虚线本身由 CSS 的 mask 生成
+        if (n) gi = '<span class="gi" style="width:' + n * 4 + 'ch"></span>';
+      }
+      html += '<div class="cl' + (sev === 'error' ? ' err' : sev === 'warning' ? ' warn' : '') + '">' + gi +
         '<span class="ln">' + (i + 1) + '</span>' +
         '<span class="lt">' + (src[i] || '') + '</span></div>';
     }
     this.hlCode.innerHTML = html;
     this.syncScroll();
     this.symbols = extractSymbols(v);
+  }
+
+  /** 缩进参考线开关 */
+  setIndentGuides(on) {
+    const next = !!on;
+    if (next === this.guides) return;
+    this.guides = next;
+    this.render();
   }
 
   syncScroll() {
@@ -99,6 +131,9 @@ export class CodeEditor {
     const w = this.wrap;
     if (w.scrollTop !== 0) w.scrollTop = 0;
     if (w.scrollLeft !== 0) w.scrollLeft = 0;
+    // 浮层跟着代码一起走
+    if (this.acOpen) this.placeAc();
+    if (!this.sigEl.classList.contains('hidden')) this.placeSig();
   }
 
   /**
@@ -432,16 +467,49 @@ export class CodeEditor {
     this.acFrom = from;
     this.acOpen = true;
     this.renderAc();
-    const pos = this.ta.selectionStart;
-    const { x, y, lh } = this.caretXY(pos);
-    const rect = this.ta.getBoundingClientRect();
-    const px = Math.min(window.innerWidth - 200, Math.max(6, rect.left + x - this.ta.scrollLeft));
-    let py = rect.top + y - this.ta.scrollTop + lh + 2;
-    const h = Math.min(240, items.length * 31 + 30);
-    if (py + h > window.innerHeight - 30) py = Math.max(8, rect.top + y - this.ta.scrollTop - h - 2);
-    this.acEl.style.left = px + 'px';
-    this.acEl.style.top = py + 'px';
+    // 光标位置只在弹出时测一次；滚动时用缓存值重算，避免滚动里反复做 DOM 测量
+    this._acPos = this.caretContentPos();
     this.acEl.classList.remove('hidden');
+    this.placeAc();
+  }
+
+  /** 光标在"内容坐标"里的位置（含 padding，未扣滚动） */
+  caretContentPos() {
+    const { x, y, lh } = this.caretXY(this.ta.selectionStart);
+    return { x, y, lh };
+  }
+
+  _hostOffset() {
+    const hr = this.host.getBoundingClientRect();
+    const tr = this.ta.getBoundingClientRect();
+    return { ox: tr.left - hr.left, oy: tr.top - hr.top };
+  }
+
+  /**
+   * 把浮层摆到光标处：容器相对定位 + 可视区钳制。
+   * 早先用 position:fixed 直接吃 getBoundingClientRect，软键盘弹出/视口平移时
+   * 坐标系一变整块就飞走（表现为"乱跳"）；现在锚在编辑区容器内，位置只跟代码滚动有关。
+   * 下方优先；放不下就按可用高度收缩而不是整块翻走，只有下方实在没地方才翻到光标上方。
+   */
+  placeAc() {
+    if (!this.acOpen || !this._acPos) return;
+    const el = this.acEl, host = this.host, p = this._acPos;
+    const { ox, oy } = this._hostOffset();
+    const hw = host.clientWidth, hh = host.clientHeight;
+    const caretTop = oy + p.y - this.ta.scrollTop;
+    const belowY = caretTop + p.lh + 2;
+    const spaceBelow = hh - 4 - belowY;
+    const spaceAbove = caretTop - 6;
+    const below = spaceBelow >= 120 || spaceBelow >= spaceAbove;
+    el.style.maxHeight = Math.max(72, Math.min(220, below ? spaceBelow : spaceAbove)) + 'px';
+
+    const pw = el.offsetWidth || 190, ph = el.offsetHeight || 120;
+    let left = ox + p.x - this.ta.scrollLeft;
+    let top = below ? belowY : caretTop - ph - 4;
+    left = Math.min(Math.max(4, hw - pw - 4), Math.max(4, left));
+    top = Math.min(Math.max(4, hh - ph - 4), Math.max(4, top));
+    el.style.left = Math.round(left) + 'px';
+    el.style.top = Math.round(top) + 'px';
   }
 
   renderAc() {
@@ -544,12 +612,23 @@ export class CodeEditor {
     const html = '<b>' + esc(item.label) + '</b>(' +
       parts.map((p, k) => (k === ctx.idx ? '<b>' + esc(p) + '</b>' : esc(p))).join(', ') + ')';
     this.sigEl.innerHTML = html;
-    const { x, y, lh } = this.caretXY(this.ta.selectionStart);
-    const rect = this.ta.getBoundingClientRect();
-    this.sigEl.style.left = Math.max(6, Math.min(window.innerWidth - 240, rect.left + x - this.ta.scrollLeft)) + 'px';
-    this.sigEl.style.top = Math.max(30, rect.top + y - this.ta.scrollTop - 26) + 'px';
+    this._sigPos = this.caretContentPos();
     this.sigEl.classList.remove('hidden');
-    void lh;
+    this.placeSig();
+  }
+
+  placeSig() {
+    if (!this._sigPos) return;
+    const el = this.sigEl, host = this.host, p = this._sigPos;
+    const { ox, oy } = this._hostOffset();
+    const hw = host.clientWidth, hh = host.clientHeight;
+    const pw = el.offsetWidth || 160, ph = el.offsetHeight || 24;
+    let left = ox + p.x - this.ta.scrollLeft;
+    let top = oy + p.y - this.ta.scrollTop - ph - 4;
+    left = Math.min(Math.max(4, hw - pw - 4), Math.max(4, left));
+    top = Math.min(Math.max(4, hh - ph - 4), Math.max(4, top));
+    el.style.left = Math.round(left) + 'px';
+    el.style.top = Math.round(top) + 'px';
   }
 
   hideSig() { this.sigEl.classList.add('hidden'); }
