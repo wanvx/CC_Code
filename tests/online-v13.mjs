@@ -1,0 +1,21 @@
+import { chromium } from 'playwright';
+const URL0 = 'https://pocketcode-ide.app.workbuddy.host/?sharecode=S62VZQDDME';
+const b = await chromium.launch({ channel: 'chrome' });
+const p = await b.newPage({ viewport: { width: 412, height: 915 } });
+const errs = [];
+p.on('pageerror', (e) => errs.push(e.message));
+await p.goto(URL0, { waitUntil: 'domcontentloaded' });
+await p.waitForFunction(() => !!window.__pc, null, { timeout: 60000 });
+const info = await p.evaluate(() => window.__pc.appInfo);
+const tabs = await p.evaluate(() => [...document.querySelectorAll('.panel-tab')].map((e) => e.dataset.tab));
+const guides = await p.evaluate(() => {
+  const ed = window.__pc.editor;
+  ed.setValue('int main() {\n    if (1) {\n        return 0;\n    }\n}\n', true);
+  return document.querySelectorAll('#hl .gi').length;
+});
+console.log('online version =', JSON.stringify(info));
+console.log('tabs =', JSON.stringify(tabs));
+console.log('guides =', guides);
+console.log('errors =', errs.length ? errs : 'none');
+await p.screenshot({ path: 'shots/online-v13.png' });
+await b.close();

@@ -22,8 +22,10 @@ await page.reload({ waitUntil: 'networkidle' });
 await page.waitForTimeout(600);
 
 // 1. 输入框存在且可用
-log('stdin box =', await page.locator('#stdin-box').count());
-log('stdin meta =', await page.locator('#stdin-meta').innerText());
+log('stdin pane =', await page.locator('#stdin-pane #stdin-ta').count());
+await page.locator('.panel-tab[data-tab="stdin"]').click();
+await page.waitForTimeout(200);
+log('stdin tab title =', await page.locator('.panel-tab[data-tab="stdin"]').getAttribute('title'));
 
 const CODE = '#include <cstdio>\n\nint main() {\n    int a, b;\n    if (scanf("%d %d", &a, &b) != 2) return 1;\n    printf("%d\\n", a + b);\n    return 0;\n}\n';
 await page.evaluate((c) => window.__pc.editor.setValue(c, true), CODE);
@@ -32,7 +34,7 @@ await page.waitForTimeout(200);
 // 2. 直接在主界面输入并在运行按钮喂进去
 await page.locator('#stdin-ta').fill('3 4');
 await page.waitForTimeout(150);
-log('meta after fill =', await page.locator('#stdin-meta').innerText());
+log('tab title after fill =', await page.locator('.panel-tab[data-tab="stdin"]').getAttribute('title'));
 await page.locator('#btn-run').click();
 await page.waitForFunction(() => /运行完成|编译失败|出错/.test(document.querySelector('#st-status').textContent), null, { timeout: 120000 });
 await page.waitForTimeout(300);
@@ -47,6 +49,8 @@ await page.evaluate(() => {
   window.__pc.openFile('other.cpp');
 });
 await page.waitForTimeout(250);
+await page.locator('.panel-tab[data-tab="stdin"]').click();
+await page.waitForTimeout(200);
 log('other stdin empty =', (await page.locator('#stdin-ta').inputValue()) === '');
 await page.locator('#stdin-ta').fill('9 9');
 await page.waitForTimeout(200);
