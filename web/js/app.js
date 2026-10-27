@@ -3,13 +3,14 @@ import { CodeEditor } from './editor.js';
 import { VFS, ROOT, langOf, isRunnable, inlineLocalIncludes, norm, parentOf, nameOf, join, displayPath } from './fs.js';
 import { plugins, iconSvg } from './plugins.js';
 import { cphPlugin, resetCphStore } from './plugins/cph.js';
+import { lintCpp } from './lint.js';
 
 const $ = (s) => document.querySelector(s);
 
 // ── 应用信息（检查更新用，发版时同步 version.json） ──
 const APP_NAME = 'CC_Code';
-const APP_VERSION = '1.3.0';
-const APP_VERSION_CODE = 8;
+const APP_VERSION = '1.4.0';
+const APP_VERSION_CODE = 9;
 const REPO_OWNER = 'wanvx';
 const REPO_NAME = 'CC_Code';
 const REPO_URL = 'https://github.com/' + REPO_OWNER + '/' + REPO_NAME;
@@ -29,6 +30,7 @@ const DEFAULTS = {
   args: '-Wall',
   fontSize: 13,
   indentGuides: true,
+  realtimeLint: true,
   stdin: '',
   prefillOn: false,
   prefillText: '#include <cstdio>\n\nint main() {\n    \n    return 0;\n}\n'
@@ -43,7 +45,9 @@ const state = {
   settings: { ...DEFAULTS },
   open: new Set(),        // 展开的目录
   activePlugin: null,
-  view: 'files'
+  view: 'files',
+  compileProblems: [],    // 上一次编译的结果
+  lintProblems: []        // 实时检查的结果
 };
 
 let editor = null;
@@ -62,6 +66,7 @@ function loadSettings() {
   if (typeof state.settings.prefillOn !== 'boolean') state.settings.prefillOn = DEFAULTS.prefillOn;
   if (typeof state.settings.prefillText !== 'string') state.settings.prefillText = DEFAULTS.prefillText;
   if (typeof state.settings.indentGuides !== 'boolean') state.settings.indentGuides = DEFAULTS.indentGuides;
+  if (typeof state.settings.realtimeLint !== 'boolean') state.settings.realtimeLint = DEFAULTS.realtimeLint;
 }
 function saveSettings() {
   try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(state.settings)); } catch (e) { /* 忽略 */ }
@@ -411,6 +416,8 @@ function blankEditor() {
   $('#st-lang').textContent = '';
   $('#st-std').textContent = '—';
   editor.setDiagnostics([]);
+  state.compileProblems = [];
+  runLintNow();
 }
 
 function renameModal(path) {
@@ -537,6 +544,8 @@ function openFile(path) {
   $('#st-lang').textContent = lang === 'c' ? 'C' : lang === 'cpp' ? 'C++' : lang === 'header' ? 'Header' : 'Text';
   $('#st-std').textContent = lang === 'c' ? state.settings.stdC : lang === 'cpp' ? state.settings.stdCpp : '—';
   editor.setDiagnostics([]);
+  state.compileProblems = [];
+  runLintNow();
   renderTabs(); renderTree();
   migrateLegacyStdin(path);
   syncStdinBox(path);
@@ -679,8 +688,9 @@ function parseProblems(errors) {
 function renderResult(r) {
   const problems = parseProblems(r.errors || []);
   const errs = problems.filter((p) => p.severity !== 'note');
-  renderProblems(errs);
+  state.compileProblems = errs;
   editor.setDiagnostics(errs);
+  paintProblems();
 
   if (r.errors && r.errors.length) {
     setStatus('编译失败 · ' + errs.length + ' 个问题', 'err');
@@ -699,6 +709,63 @@ function renderResult(r) {
   if (r.output) termLine(r.output.replace(/\n$/, ''), 't-out');
   termLine('— 进程结束，退出码 ' + r.exitCode + (r.runMs != null ? '，用时 ' + r.runMs + ' ms' : ''), 't-dim');
   showPanel('output');
+}
+
+// ── 问题面板：编译结果 + 实时检查 合并显示 ──
+/** 同一行编译已经报过了，就不再用实时检查的提示去打扰 */
+function mergeProblems(compile, lint) {
+  const out = compile.slice();
+  const lines = new Set(compile.map((p) => p.line));
+  const keys = new Set(compile.map((p) => p.line + '|' + p.message));
+  for (const p of lint) {
+    if (lines.has(p.line)) continue;
+    const k = p.line + '|' + p.message;
+    if (keys.has(k)) continue;
+    keys.add(k);
+    out.push(p);
+  }
+  return out.sort((a, b) => a.line - b.line || a.col - b.col);
+}
+
+function paintProblems() {
+  const list = mergeProblems(state.compileProblems, state.lintProblems);
+  renderProblems(list);
+  updateLintBadge(list);
+}
+
+/** 状态栏的小计数，点一下打开问题面板 */
+function updateLintBadge(list) {
+  const el = $('#st-lint');
+  if (!el) return;
+  const errs = list.filter((p) => p.severity !== 'warning').length;
+  const warns = list.length - errs;
+  if (!list.length) {
+    el.textContent = '';
+    el.classList.add('hidden');
+    return;
+  }
+  el.classList.remove('hidden');
+  el.classList.toggle('has-err', errs > 0);
+  el.textContent = (errs ? '✕ ' + errs : '') + (errs && warns ? '  ' : '') + (warns ? '▲ ' + warns : '');
+}
+
+// ── 实时检查（纯本地，不编译） ──
+const LINT_DELAY = 220;   // 打字停顿多久后检查，太短会打断手感，太长就没有"实时"感
+let lintTimer = 0;
+function scheduleLint() {
+  if (lintTimer) clearTimeout(lintTimer);
+  lintTimer = setTimeout(runLintNow, LINT_DELAY);
+}
+function runLintNow() {
+  if (lintTimer) { clearTimeout(lintTimer); lintTimer = 0; }
+  const path = state.active;
+  const checkable = path && /\.(c|cc|cpp|cxx|h|hh|hpp)$/i.test(path);
+  const items = (state.settings.realtimeLint && checkable)
+    ? lintCpp(editor.value).map((d) => ({ ...d, file: nameOf(path) }))
+    : [];
+  state.lintProblems = items;
+  editor.setLint(items);
+  paintProblems();
 }
 
 function renderProblems(list) {
@@ -899,6 +966,9 @@ function settingsBody() {
     '<div class="field"><div class="row-between"><label style="margin:0">缩进参考线</label>' +
       '<button class="switch' + (s.indentGuides ? ' on' : '') + '" id="m-guides"></button></div>' +
       '<div class="hint">用灰色虚线标出每一级缩进的位置，嵌套层级一眼看清。</div></div>' +
+    '<div class="field"><div class="row-between"><label style="margin:0">实时检查</label>' +
+      '<button class="switch' + (s.realtimeLint ? ' on' : '') + '" id="m-lint"></button></div>' +
+      '<div class="hint">打字时立刻标出括号没配对、语句末尾漏分号这类错误，不用等编译。只是提示，编译才是最终结果。</div></div>' +
     '<div class="field"><label>C 标准</label>' + seg('seg-stdc', VALID_STD.stdC, s.stdC) + '</div>' +
     '<div class="field"><label>C++ 标准</label>' + seg('seg-stdcpp', VALID_STD.stdCpp, s.stdCpp) + '</div>' +
     '<div class="field"><label>编译参数</label><input id="m-args" type="text" value="' + escapeHtml(s.args) + '">' +
@@ -958,6 +1028,13 @@ function settingsModal() {
     e.currentTarget.classList.toggle('on', s.indentGuides);
     editor.setIndentGuides(s.indentGuides);
     saveSettings();
+  });
+
+  $('#m-lint').addEventListener('click', (e) => {
+    s.realtimeLint = !s.realtimeLint;
+    e.currentTarget.classList.toggle('on', s.realtimeLint);
+    saveSettings();
+    runLintNow();
   });
 
   $('#m-prefill-on').addEventListener('click', (e) => {
@@ -1067,6 +1144,7 @@ function init() {
     onChange: () => {
       if (!state.active) return;
       state.vfs.write(state.active, editor.value);
+      scheduleLint();
     },
     onCaret: (line, col) => { $('#st-pos').textContent = '行 ' + line + ', 列 ' + col; },
     onRun: runActive,
@@ -1077,7 +1155,7 @@ function init() {
   window.__pc = {
     state, plugins, openFile, renderTree, runActive, editor,
     openPlugin, openFilesView, openDrawer, closeDrawer, openModal, closeModal,
-    settingsModal, checkUpdate, openExternal,
+    settingsModal, checkUpdate, openExternal, runLintNow,
     appInfo: { name: APP_NAME, version: APP_VERSION, code: APP_VERSION_CODE, repo: REPO_URL }
   };
 
@@ -1104,6 +1182,7 @@ function init() {
 
   $('#btn-run').addEventListener('click', runActive);
   $('#btn-export').addEventListener('click', exportActive);
+  $('#st-lint').addEventListener('click', () => showPanel('problems'));
   $('#btn-settings').addEventListener('click', settingsModal);
   $('#side-close').addEventListener('click', () => { closeDrawer(); if (!isMobile()) $('#sidebar').style.display = 'none'; });
   $('#btn-drawer').addEventListener('click', () => {

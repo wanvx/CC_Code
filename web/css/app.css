@@ -267,7 +267,7 @@ svg.fill { fill: currentColor; stroke: none; }
   user-select: none;
 }
 #hl .cl.err .ln { color: var(--err); font-weight: 700; }
-#hl .cl.warn .ln { color: var(--warn); }
+#hl .cl.warn .ln { color: var(--warn); font-weight: 700; }
 /* 代码列：横向滚动时位移「内容」（text-indent）而非盒子，overflow 才能裁住，不会压到行号上 */
 #hl .lt {
   flex: 1 1 auto;
@@ -378,6 +378,13 @@ svg.fill { fill: currentColor; stroke: none; }
 .st-status.ok { color: var(--ok); }
 .st-status.err { color: var(--err); }
 .st-net { color: var(--ok); font-size: 10px; padding: 0 4px; }
+.st-lint {
+  height: 20px; padding: 0 7px; border-radius: 6px; border: 0; background: transparent;
+  font-size: 10.5px; font-weight: 600; font-family: var(--mono);
+  color: var(--warn); white-space: nowrap; cursor: pointer;
+}
+.st-lint.has-err { color: var(--err); }
+.st-lint:active { background: var(--bg-4); }
 
 /* ── 补全 / 签名 ──────────────────────── */
 /* 锚在 #editor-body 内（不是 fixed）：位置由编辑器自己算，随代码滚动同步，
@@ -407,7 +414,9 @@ svg.fill { fill: currentColor; stroke: none; }
   color: var(--fg-faint); font-size: 11px; margin-left: auto;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 46%;
 }
-.ac-item.sel { background: var(--accent); }
+/* 还没用方向键挑时的第一项：淡底 + 左侧细条，提示"Tab 会插这个" */
+.ac-item.pre { background: var(--bg-4); box-shadow: inset 2px 0 0 var(--accent); }
+.ac-item.sel { background: var(--accent); box-shadow: none; }
 .ac-item.sel .ac-label, .ac-item.sel .ac-detail, .ac-item.sel .ac-kind { color: #fff; }
 .ac-close {
   position: sticky; bottom: 0; display: flex; align-items: center; justify-content: flex-end;
@@ -654,6 +663,7 @@ svg.fill { fill: currentColor; stroke: none; }
   .run-btn span { display: none; }
   .run-btn { padding: 0 10px; }
   .st-net { display: none; }
+  .st-lint { display: none; }
   #btn-export { width: 32px; height: 32px; }
 }
 @media (max-height: 520px) { #panel { height: 52%; } }

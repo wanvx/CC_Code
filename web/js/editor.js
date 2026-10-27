@@ -39,9 +39,10 @@ export class CodeEditor {
     this.fontSize = 13;
     this.lineHeight = 20;
     this.symbols = [];
-    this.diags = new Map();
+    this.diags = new Map();       // 编译诊断：行号 → error / warning
+    this.lintMap = new Map();     // 实时检查：行号 → error / warning
     this.acItems = [];
-    this.acIndex = 0;
+    this.acIndex = -1;            // -1 = 还没用方向键挑，第一下 ↓ 落在第 1 项
     this.acOpen = false;
     this.acPrefix = '';
     this.acMember = false;
@@ -95,7 +96,7 @@ export class CodeEditor {
     const raw = this.guides ? v.split('\n') : null;
     let html = '';
     for (let i = 0; i < total; i++) {
-      const sev = this.diags.get(i + 1);
+      const sev = this.diags.get(i + 1) || this.lintMap.get(i + 1);
       let gi = '';
       if (raw) {
         const n = indentLevels(raw[i] || '');
@@ -186,6 +187,22 @@ export class CodeEditor {
       this.diags.set(it.line, it.severity === 'error' ? 'error' : 'warning');
     }
     this.render();
+  }
+
+  /** 实时检查结果（不编译）：只影响行号栏染色，编译诊断优先 */
+  setLint(items) {
+    const next = new Map();
+    for (const it of items || []) {
+      if (!it.line) continue;
+      const cur = next.get(it.line);
+      if (cur === 'error') continue;
+      next.set(it.line, it.severity === 'error' ? 'error' : 'warning');
+    }
+    // 没变化就别重绘：输入时每 220ms 都会调一次，大文件上重绘不便宜
+    let same = next.size === this.lintMap.size;
+    if (same) for (const [k, v] of next) if (this.lintMap.get(k) !== v) { same = false; break; }
+    this.lintMap = next;
+    if (!same) this.render();
   }
 
   gotoLine(line, col) {
@@ -461,7 +478,7 @@ export class CodeEditor {
     const items = suggestions(prefix, this.symbols, this.acMember);
     if (!items.length) { this.hideAc(); return; }
     this.acItems = items;
-    this.acIndex = 0;
+    this.acIndex = -1;          // 未选中：第一项只作为"预选"提示，第一下 ↓ 才落到它上面
     this.acNavigated = false;
     this.acPrefix = prefix;
     this.acFrom = from;
@@ -517,7 +534,9 @@ export class CodeEditor {
       const kindCls = it.kind === 'kw' ? 'kw' : it.kind === 'fn' || it.kind === 'mem' ? 'fn' : it.kind === 'ty' || it.kind === 'sym' ? 'ty' : 'sym';
       const kindTxt = it.kind === 'kw' ? 'K' : it.kind === 'fn' ? 'f' : it.kind === 'mem' ? 'm' : it.kind === 'sn' ? 'S' : 'T';
       const detail = (it.sig || it.doc || '').replace(/[<>]/g, (c) => (c === '<' ? '&lt;' : '&gt;'));
-      return '<div class="ac-item' + (i === this.acIndex ? ' sel' : '') + '" data-i="' + i + '">' +
+      // acIndex = -1 时第一项带 pre（淡色预选）：说明 Tab 会插它，但方向键还没挑
+      const cls = i === this.acIndex ? ' sel' : (this.acIndex < 0 && i === 0 ? ' pre' : '');
+      return '<div class="ac-item' + cls + '" data-i="' + i + '">' +
         '<span class="ac-kind ' + kindCls + '">' + kindTxt + '</span>' +
         '<span class="ac-label">' + it.label + '</span>' +
         '<span class="ac-detail">' + detail + '</span></div>';
@@ -533,13 +552,30 @@ export class CodeEditor {
     }
   }
 
-  /** @returns {boolean} false 表示已到边界（调用方据此关闭补全） */
+  /**
+   * 方向键移动选择。
+   * 还没选中时（acIndex = -1），第一下不管上还是下都落在第 1 项 —— 用户按 ↓ 就是想要第一项，
+   * 不能一按就跳到第二项。
+   * @returns {boolean} false 表示已到边界（调用方据此关闭补全）
+   */
   moveAc(d) {
+    const n = this.acItems.length;
+    if (!n) return false;
+    if (this.acIndex < 0) {
+      this.acIndex = 0;
+      this.renderAc();
+      return true;
+    }
     const next = this.acIndex + d;
-    if (next < 0 || next >= this.acItems.length) return false;
+    if (next < 0 || next >= n) return false;
     this.acIndex = next;
     this.renderAc();
     return true;
+  }
+
+  /** 当前会被接受的候选（未挑过就是第一项） */
+  currentAcItem() {
+    return this.acItems[this.acIndex < 0 ? 0 : this.acIndex];
   }
 
   hideAc() {
@@ -550,7 +586,7 @@ export class CodeEditor {
 
   acceptAc() {
     if (!this.acOpen) return;
-    const it = this.acItems[this.acIndex];
+    const it = this.currentAcItem();
     this.hideAc();
     if (!it) return;
     this.justAccepted = it.label;
