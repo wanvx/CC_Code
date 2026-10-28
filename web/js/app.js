@@ -9,8 +9,8 @@ const $ = (s) => document.querySelector(s);
 
 // ── 应用信息（检查更新用，发版时同步 version.json） ──
 const APP_NAME = 'CC_Code';
-const APP_VERSION = '1.6.1';
-const APP_VERSION_CODE = 12;
+const APP_VERSION = '1.7.0';
+const APP_VERSION_CODE = 13;
 const REPO_OWNER = 'wanvx';
 const REPO_NAME = 'CC_Code';
 const REPO_URL = 'https://github.com/' + REPO_OWNER + '/' + REPO_NAME;
@@ -23,6 +23,10 @@ const VERSION_SOURCES = [
 const UPDATE_SEEN_KEY = 'cccode.update.seen';
 
 const SETTINGS_KEY = 'pocketcode.settings.v2';
+// 代码配色方案：值是存储里的 key（改名会影响老用户的设置，保持不变），标签是界面上显示的
+const CODE_THEMES = ['classic', 'vscode', '2026'];
+const CODE_THEME_LABEL = { classic: '默认', vscode: '经典', '2026': '2026' };
+
 const DEFAULTS = {
   theme: 'dark',
   stdC: 'gnu17',
@@ -32,7 +36,7 @@ const DEFAULTS = {
   indentGuides: true,
   realtimeLint: true,
   fontFamily: 'system',
-  codeTheme: 'classic',      // classic（Material 风）| vscode（Dark+ / Light+）
+  codeTheme: 'classic',      // classic（默认，Material 风）| vscode（经典，Dark+ / Light+）| 2026（新版默认主题）
   bracketColors: false,      // 括号配对颜色化（VSCode 三色循环）
   panelCollapsed: false,
   stdin: '',
@@ -84,7 +88,7 @@ function loadSettings() {
   if (typeof state.settings.realtimeLint !== 'boolean') state.settings.realtimeLint = DEFAULTS.realtimeLint;
   if (!FONT_OF[state.settings.fontFamily]) state.settings.fontFamily = DEFAULTS.fontFamily;
   if (typeof state.settings.panelCollapsed !== 'boolean') state.settings.panelCollapsed = DEFAULTS.panelCollapsed;
-  if (state.settings.codeTheme !== 'vscode') state.settings.codeTheme = DEFAULTS.codeTheme;
+  if (!CODE_THEMES.includes(state.settings.codeTheme)) state.settings.codeTheme = DEFAULTS.codeTheme;
   if (typeof state.settings.bracketColors !== 'boolean') state.settings.bracketColors = DEFAULTS.bracketColors;
 }
 function saveSettings() {
@@ -201,7 +205,15 @@ async function fetchUpdateInfo() {
   for (const src of VERSION_SOURCES) {
     try {
       const isApi = src.includes('api.github.com');
-      const res = await fetch(src + (isApi ? '' : '?t=' + Date.now()), { cache: 'no-store' });
+      // 单个源最多等 5 秒：某些网络下请求会一直挂着，不设上限徽标会永远停在"检查中"
+      const ac = new AbortController();
+      const timer = setTimeout(() => ac.abort(), 5000);
+      let res;
+      try {
+        res = await fetch(src + (isApi ? '' : '?t=' + Date.now()), { cache: 'no-store', signal: ac.signal });
+      } finally {
+        clearTimeout(timer);
+      }
       if (!res.ok) throw new Error('HTTP ' + res.status);
       const data = await res.json();
       if (isApi) {
@@ -220,12 +232,58 @@ async function fetchUpdateInfo() {
   throw lastErr || new Error('unreachable');
 }
 
+// 右下角状态徽标：有新版本 / 最新版 / 离线
+const UPD_TEXT = { checking: '检查中…', latest: '最新版', new: '有新版本', offline: '离线' };
+let updState = 'checking';
+let updInfo = null;
+
+function setUpdState(st, info) {
+  updState = st;
+  if (info !== undefined) updInfo = info;
+  const el = document.getElementById('upd-badge');
+  if (!el) return;
+  el.className = 'upd-badge ' + st;
+  el.textContent = UPD_TEXT[st] || '';
+  el.title = st === 'new' ? '有新版本 v' + ((updInfo && updInfo.version) || '') + '，点开查看'
+    : st === 'offline' ? '当前没有网络，点一下重新检查'
+      : '点一下重新检查更新';
+}
+
+function mountUpdBadge() {
+  if (document.getElementById('upd-badge')) return;
+  const bar = document.getElementById('statusbar');
+  if (!bar) return;
+  const el = document.createElement('button');
+  el.id = 'upd-badge';
+  el.type = 'button';
+  el.className = 'upd-badge checking';
+  el.textContent = UPD_TEXT.checking;
+  el.addEventListener('click', () => {
+    if (updState === 'new' && updInfo) showUpdateModal(updInfo);
+    else checkUpdate(true);
+  });
+  bar.appendChild(el);
+  setUpdState(updState);
+}
+
 async function checkUpdate(manual) {
   if (manual) setStatus('检查更新…', 'busy');
+  // 系统层面就知道没网时不必发请求，省一次 4~12 秒的等待
+  if (navigator.onLine === false) {
+    setUpdState('offline');
+    if (manual) {
+      setStatus('离线', 'err');
+      toast('当前没有网络；检查更新是唯一需要联网的功能，其它功能不受影响', 2800);
+    }
+    return;
+  }
+  if (!manual) setUpdState('checking');
   try {
     const info = await fetchUpdateInfo();
     try { localStorage.setItem(UPDATE_AT_KEY, String(Date.now())); } catch (e) { /* 忽略 */ }
-    if ((Number(info.versionCode) || 0) > APP_VERSION_CODE) {
+    const has = (Number(info.versionCode) || 0) > APP_VERSION_CODE;
+    setUpdState(has ? 'new' : 'latest', info);
+    if (has) {
       if (manual) { setStatus('有新版本', 'ok'); showUpdateModal(info); }
       else notifyUpdate(info);
     } else if (manual) {
@@ -233,9 +291,10 @@ async function checkUpdate(manual) {
       toast('已是最新版本 v' + APP_VERSION);
     }
   } catch (e) {
-    // 静默检查失败不打扰（离线是正常状态），只有用户主动点才提示
+    // 网络不通 / 三个源都失败：徽标显示「离线」，不打扰（离线是正常状态）
+    setUpdState('offline');
     if (manual) {
-      setStatus('检查失败', 'err');
+      setStatus('离线', 'err');
       toast('检查失败：这个功能需要联网，离线时其它功能不受影响', 2800);
     }
   }
@@ -250,12 +309,16 @@ function notifyUpdate(info) {
   toast(APP_NAME + ' v' + info.version + ' 可用，设置里可更新', 3200);
 }
 
-/** 启动后静默检查，12 小时节流，离线静默失败 */
+/** 启动后静默检查：徽标每次都刷新，弹窗提醒做 12 小时节流 */
 function scheduleUpdateCheck() {
+  mountUpdBadge();
+  setUpdState(navigator.onLine === false ? 'offline' : 'checking');
   let last = 0;
   try { last = Number(localStorage.getItem(UPDATE_AT_KEY) || 0); } catch (e) { /* 忽略 */ }
-  if (Date.now() - last < UPDATE_TTL) return;
-  setTimeout(() => { checkUpdate(false); }, 4000);
+  const fresh = Date.now() - last < UPDATE_TTL;
+  setTimeout(() => { checkUpdate(false); }, fresh ? 1500 : 4000);
+  window.addEventListener('offline', () => setUpdState('offline'));
+  window.addEventListener('online', () => { if (updState === 'offline') checkUpdate(false); });
 }
 
 function showUpdateModal(info) {
@@ -927,8 +990,12 @@ function openModal(title, bodyHtml, footHtml) {
   $('#modal-body').innerHTML = bodyHtml;
   $('#modal-foot').innerHTML = footHtml;
   $('#modal').classList.remove('hidden');
+  document.body.classList.add('modal-open');
 }
-function closeModal() { $('#modal').classList.add('hidden'); }
+function closeModal() {
+  $('#modal').classList.add('hidden');
+  document.body.classList.remove('modal-open');
+}
 
 function confirmModal(title, text, onOk) {
   openModal(title, '<div class="field"><div class="hint">' + escapeHtml(text) + '</div></div>',
@@ -1038,8 +1105,8 @@ function settingsBody() {
       '<div class="font-grid" id="seg-font">' + CODE_FONTS.map(fontBtn).join('') + '</div>' +
       '<div class="hint">内置两款开源等宽字体（离线可用）。「系统无衬线」字符宽度不统一，缩进参考线会对不齐。</div></div>' +
     '<div class="field"><label>代码配色</label>' +
-      seg('seg-code-theme', ['classic', 'vscode'], s.codeTheme, (v) => (v === 'vscode' ? 'VSCode' : '经典')) +
-      '<div class="hint">VSCode 模式按 Dark+ / Light+ 的语义分层染色：控制流紫、类型青、函数黄、字符串橙；跟随上面的深色 / 浅色主题自动切换对应那一套。</div></div>' +
+      seg('seg-code-theme', CODE_THEMES, s.codeTheme, (v) => CODE_THEME_LABEL[v]) +
+      '<div class="hint">默认是原来的 Material 风。<br>「经典」= VS Code 的 Dark+ / Light+：变量浅蓝、函数黄、字符串橙。<br>「2026」= VS Code 1.113 起的新默认主题：变量中性、参数暖橙、类型偏红、字符串浅蓝，整体少一点蓝。<br>两套都会跟随上面的深色 / 浅色主题自动切换。</div></div>' +
     '<div class="field"><div class="row-between"><label style="margin:0">括号配对着色</label>' +
       '<button class="switch' + (s.bracketColors ? ' on' : '') + '" id="m-brk"></button></div>' +
       '<div class="hint">按嵌套深度循环三色（金 / 紫 / 蓝），未闭合的括号标红，光标贴住括号时和它的配对一起高亮。可以单独打开，不换配色也能用。</div></div>' +
@@ -1261,15 +1328,15 @@ function init() {
   });
   editor.onZoom = (fs) => { state.settings.fontSize = fs; $('#st-font').textContent = fs; saveSettings(); };
   // 先定好配色再加载文件：第一次 render 就用对，省掉一次整篇重绘
-  editor.codeTheme = state.settings.codeTheme === 'vscode' ? 'vscode' : 'classic';
+  editor.codeTheme = CODE_THEMES.includes(state.settings.codeTheme) ? state.settings.codeTheme : 'classic';
   editor.bracketColors = !!state.settings.bracketColors;
   if (new URLSearchParams(location.search).has('debug')) window.__ed = editor;
   window.__pc = {
     state, plugins, openFile, renderTree, runActive, editor,
     openPlugin, openFilesView, openDrawer, closeDrawer, openModal, closeModal,
-    settingsModal, checkUpdate, openExternal, runLintNow,
+    settingsModal, checkUpdate, openExternal, runLintNow, applySettings, setUpdState,
     showPanel, switchPanelTab, setPanelCollapsed, isPanelCollapsed, isRealTap,
-    setCodeTheme: (t) => { state.settings.codeTheme = t === 'vscode' ? 'vscode' : 'classic'; applySettings(); },
+    setCodeTheme: (t) => { state.settings.codeTheme = CODE_THEMES.includes(t) ? t : 'classic'; applySettings(); },
     setBracketColors: (on) => { state.settings.bracketColors = !!on; applySettings(); },
     appInfo: { name: APP_NAME, version: APP_VERSION, code: APP_VERSION_CODE, repo: REPO_URL }
   };

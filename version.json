@@ -1,9 +1,9 @@
 {
   "name": "CC_Code",
-  "version": "1.6.1",
-  "versionCode": 12,
+  "version": "1.7.0",
+  "versionCode": 13,
   "released": "2026-10-28",
-  "notes": "修复：VSCode 配色的前景色还原不准 —— 之前标点、运算符、括号也被染成浅蓝，整篇发蓝。现在标识符才是浅蓝（Dark+ #9CDCFE / Light+ #001080），其余落默认前景（#D4D4D4 / #000000），与 VS Code 一致\n修复：多行块注释只把第一行染成注释色，续行被当成代码\n新增：字符串里的转义序列（\\n \\t）与格式占位符（%d %s）按 VS Code 的色分开\n新增：预处理指令分层更细 —— #define/#undef 的宏名用蓝色，指令后的数字用绿色\n新增：大写开头的标识符处在声明位置（Foo f; / Node* p）时按类型名着色",
+  "notes": "新增：「2026」代码配色 —— 复刻 VS Code 1.113 起的默认主题 2026 Dark / 2026 Light：局部变量改中性色、参数暖橙、类型关键字偏红、函数紫、字符串浅蓝，整体少一点蓝。设置 → 代码配色里三档任选\n改名：原「经典」配色改称「默认」，原「VSCode」配色改称「经典」（只改显示名字，已保存的设置不受影响）\n新增：启动时自动检查更新，状态栏右下角常驻一枚徽标 —— 有新版本 / 最新版 / 离线，点一下可查看更新内容或重新检查\n优化：检查更新单源最多等 5 秒，网络卡住时不再一直停在「检查中」",
   "apk": "https://github.com/wanvx/CC_Code/releases/latest/download/CC_Code.apk",
   "web": "https://pocketcode-ide.app.workbuddy.host/?sharecode=S62VZQDDME"
 }

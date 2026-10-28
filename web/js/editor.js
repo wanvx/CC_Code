@@ -53,7 +53,7 @@ export class CodeEditor {
     this.lang = 'cpp';
     this.fontSize = 13;
     this.lineHeight = 20;
-    this.codeTheme = 'classic';    // classic | vscode
+    this.codeTheme = 'classic';    // classic（默认）| vscode（经典）| 2026（新版）
     this.bracketColors = false;    // 括号配对颜色化
     this._br = [];                 // 括号位置：[{line, col, idx, ch, depth, pair}]
     this._brUn = [];               // 未闭合的开括号
@@ -115,7 +115,7 @@ export class CodeEditor {
   _hlOpts() {
     const br = this.bracketColors;
     return {
-      vscode: this.codeTheme === 'vscode',
+      vscode: this.codeTheme !== 'classic',
       brackets: br,
       brOut: br ? this._br : null,
       unmatchedOut: br ? this._brUn : null,
@@ -125,7 +125,7 @@ export class CodeEditor {
 
   /** 配色 / 括号着色切换：整篇重算（切设置是低频操作，全量重绘更省心） */
   setCodeTheme(theme) {
-    const next = theme === 'vscode' ? 'vscode' : 'classic';
+    const next = theme === 'vscode' || theme === '2026' ? theme : 'classic';
     if (next === this.codeTheme) return;
     this.codeTheme = next;
     this.render();

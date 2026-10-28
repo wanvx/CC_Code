@@ -20,6 +20,11 @@ const KW_STOR = new Set([
   'explicit','mutable','thread_local','alignas','alignof','static_assert','export','concept',
   'requires','typeid','and','or','not'
 ]);
+// 修饰符单独一层（2026 配色里 const/static 是蓝、struct/class 是红，两者不同色）
+const KW_MOD = new Set([
+  'const','static','extern','inline','register','restrict','volatile','mutable','explicit','virtual',
+  'constexpr','consteval','constinit','thread_local','noexcept','override','final'
+]);
 const KW = new Set([...KW_CTL, ...KW_STOR]);
 
 // 内置基本类型（VSCode: storage.type → #569CD6）
@@ -80,6 +85,7 @@ function clsClassic(t, next) {
  */
 function clsVscode(t, next, prevKw, after) {
   if (KW_CTL.has(t)) return 'tk-ctl';
+  if (KW_MOD.has(t)) return 'tk-mod';
   if (KW_STOR.has(t)) return 'tk-key';
   if (TY_BASIC.has(t)) return 'tk-kwtype';
   if (TY_STL.has(t)) return 'tk-type';

@@ -45,6 +45,7 @@
   --tk-id: var(--fg);           /* 普通标识符 */
   --tk-fg: var(--fg);           /* 默认前景（标点 / 运算符） */
   --tk-esc: var(--tk-str);      /* 字符串里的转义序列 \n \t */
+  --tk-mod: var(--tk-key);      /* const / static 这类修饰符 */
   --tk-inc: var(--tk-pre);      /* #include 的目标部分 */
   --guide: #2c3342;    /* 缩进参考线 */
   /* 括号配对颜色：VSCode bracketPairColorization 的三色循环 + 未匹配红 */
@@ -120,6 +121,53 @@
   --tk-inc: #a31515;
   --tk-fn: #795e26;
   --tk-punc: #000000;
+}
+
+/* ── 2026 配色（VS Code 1.113 起的新默认主题 2026 Dark / 2026 Light）──────
+   色值来自主题源文件 2026-dark.json / 2026-light.json 的实测解析，
+   与 Dark+ 最大的差别：局部变量不再是蓝色，改中性色；参数暖橙；类型关键字偏红；
+   字符串浅蓝；注释灰。整体"少一点蓝"，这是这一代主题的取向。 */
+:root[data-code-theme="2026"] {
+  --tk-ctl: #c586c0;      /* for / if / return */
+  --tk-key: #ff7b72;      /* struct / class / public */
+  --tk-kwtype: #ff7b72;   /* int / void / char */
+  --tk-const: #569cd6;    /* true / false / NULL */
+  --tk-mod: #569cd6;      /* const / static / extern */
+  --tk-type: #4ec9b0;     /* Node / std / vector */
+  --tk-fn: #d2a8ff;       /* solve / printf */
+  --tk-str: #a5d6ff;
+  --tk-num: #b5cea8;
+  --tk-com: #8b949e;
+  --tk-pre: #c586c0;
+  --tk-inc: #a5d6ff;
+  --tk-esc: #d7ba7d;
+  --tk-id: #c9d1d9;       /* 局部变量、成员 */
+  --tk-fg: #bbbebf;       /* 标点 / 运算符 */
+  --tk-punc: #bbbebf;
+  --br-match-bg: rgba(57, 148, 188, .34);
+  --br-match-line: rgba(57, 148, 188, .6);
+}
+:root[data-code-theme="2026"][data-theme="light"] {
+  --tk-ctl: #af00db;
+  --tk-key: #cf222e;
+  --tk-kwtype: #cf222e;
+  --tk-const: #0000ff;
+  --tk-mod: #0000ff;
+  --tk-type: #267f99;
+  --tk-fn: #8250df;
+  --tk-str: #0a3069;
+  --tk-num: #098658;
+  --tk-com: #6e7781;
+  --tk-pre: #af00db;
+  --tk-inc: #0a3069;
+  --tk-esc: #ee0000;
+  --tk-id: #1f2328;
+  --tk-fg: #202020;
+  --tk-punc: #202020;
+  --br-match-bg: rgba(0, 105, 204, .25);
+  --br-match-line: rgba(0, 105, 204, .5);
+  /* 2026 Light 底是纯白，金色括号需要再压一档 */
+  --br-0: #9a7209;
 }
 
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
@@ -372,12 +420,14 @@ svg.fill { fill: currentColor; stroke: none; }
 .tk-const { color: var(--tk-const); }
 .tk-id { color: var(--tk-id); }
 .tk-esc { color: var(--tk-esc); }
+.tk-mod { color: var(--tk-mod); }
 .tk-inc { color: var(--tk-inc); }
 
-/* VSCode 模式下：标识符单独包 .tk-id，其余（标点、运算符、括号）落默认前景色。
+/* 语义配色模式下：标识符单独包 .tk-id，其余（标点、运算符、括号）落默认前景色。
    Dark+ 的默认前景是 #D4D4D4 近白，标识符是 #9CDCFE 浅蓝 —— 两者必须分开，
-   否则整篇都是蓝的，反而比 VSCode 更花 */
-:root[data-code-theme="vscode"] #hl .lt { color: var(--tk-fg); }
+   否则整篇都是蓝的，反而比 VSCode 更花。2026 配色同理（变量中性、标点近白） */
+:root[data-code-theme="vscode"] #hl .lt,
+:root[data-code-theme="2026"] #hl .lt { color: var(--tk-fg); }
 
 /* 括号配对颜色（VSCode bracketPairColorization）：按嵌套深度 0/1/2 循环 */
 #hl .bk { color: inherit; }
@@ -777,3 +827,30 @@ svg.fill { fill: currentColor; stroke: none; }
 }
 @media (max-height: 520px) { #panel { height: 52%; } }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+
+/* ── 右下角更新状态徽标（状态栏最右侧一格）─────
+   三种状态：有新版本（点开更新框）/ 最新版 / 离线。
+   放在状态栏里而不是浮层：浮层会盖住面板的收起按钮和代码最后一行。 */
+.upd-badge {
+  display: none;
+  align-items: center; gap: 4px;
+  flex: 0 0 auto;
+  height: 16px; padding: 0 7px; margin-left: 6px;
+  border-radius: 999px;
+  font-size: 10.5px; line-height: 1;
+  background: var(--bg-4); color: var(--fg-dim);
+  border: 1px solid transparent;
+}
+.upd-badge.checking, .upd-badge.latest, .upd-badge.new, .upd-badge.offline { display: inline-flex; }
+.upd-badge::before {
+  content: ''; width: 5px; height: 5px; border-radius: 50%;
+  background: var(--fg-faint); flex: 0 0 auto;
+}
+.upd-badge.new { color: var(--accent); border-color: var(--accent); font-weight: 600; }
+.upd-badge.new::before { background: var(--accent); }
+.upd-badge.latest::before { background: #3ec27a; }
+.upd-badge.offline { color: var(--fg-faint); background: transparent; }
+.upd-badge.offline::before { background: var(--fg-faint); }
+.upd-badge.checking::before { animation: updbadge-pulse 1s ease-in-out infinite; }
+.upd-badge:active { opacity: .7; }
+@keyframes updbadge-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .25; } }
