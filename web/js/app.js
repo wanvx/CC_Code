@@ -9,8 +9,8 @@ const $ = (s) => document.querySelector(s);
 
 // ── 应用信息（检查更新用，发版时同步 version.json） ──
 const APP_NAME = 'CC_Code';
-const APP_VERSION = '1.5.0';
-const APP_VERSION_CODE = 10;
+const APP_VERSION = '1.6.0';
+const APP_VERSION_CODE = 11;
 const REPO_OWNER = 'wanvx';
 const REPO_NAME = 'CC_Code';
 const REPO_URL = 'https://github.com/' + REPO_OWNER + '/' + REPO_NAME;
@@ -32,6 +32,8 @@ const DEFAULTS = {
   indentGuides: true,
   realtimeLint: true,
   fontFamily: 'system',
+  codeTheme: 'classic',      // classic（Material 风）| vscode（Dark+ / Light+）
+  bracketColors: false,      // 括号配对颜色化（VSCode 三色循环）
   panelCollapsed: false,
   stdin: '',
   prefillOn: false,
@@ -82,6 +84,8 @@ function loadSettings() {
   if (typeof state.settings.realtimeLint !== 'boolean') state.settings.realtimeLint = DEFAULTS.realtimeLint;
   if (!FONT_OF[state.settings.fontFamily]) state.settings.fontFamily = DEFAULTS.fontFamily;
   if (typeof state.settings.panelCollapsed !== 'boolean') state.settings.panelCollapsed = DEFAULTS.panelCollapsed;
+  if (state.settings.codeTheme !== 'vscode') state.settings.codeTheme = DEFAULTS.codeTheme;
+  if (typeof state.settings.bracketColors !== 'boolean') state.settings.bracketColors = DEFAULTS.bracketColors;
 }
 function saveSettings() {
   try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(state.settings)); } catch (e) { /* 忽略 */ }
@@ -1033,6 +1037,12 @@ function settingsBody() {
     '<div class="field"><label>代码字体</label>' +
       '<div class="font-grid" id="seg-font">' + CODE_FONTS.map(fontBtn).join('') + '</div>' +
       '<div class="hint">内置两款开源等宽字体（离线可用）。「系统无衬线」字符宽度不统一，缩进参考线会对不齐。</div></div>' +
+    '<div class="field"><label>代码配色</label>' +
+      seg('seg-code-theme', ['classic', 'vscode'], s.codeTheme, (v) => (v === 'vscode' ? 'VSCode' : '经典')) +
+      '<div class="hint">VSCode 模式按 Dark+ / Light+ 的语义分层染色：控制流紫、类型青、函数黄、字符串橙；跟随上面的深色 / 浅色主题自动切换对应那一套。</div></div>' +
+    '<div class="field"><div class="row-between"><label style="margin:0">括号配对着色</label>' +
+      '<button class="switch' + (s.bracketColors ? ' on' : '') + '" id="m-brk"></button></div>' +
+      '<div class="hint">按嵌套深度循环三色（金 / 紫 / 蓝），未闭合的括号标红，光标贴住括号时和它的配对一起高亮。可以单独打开，不换配色也能用。</div></div>' +
     '<div class="field"><div class="row-between"><label style="margin:0">缩进参考线</label>' +
       '<button class="switch' + (s.indentGuides ? ' on' : '') + '" id="m-guides"></button></div>' +
       '<div class="hint">用灰色虚线标出每一级缩进的位置，嵌套层级一眼看清。</div></div>' +
@@ -1097,6 +1107,7 @@ function settingsModal() {
   });
   bindSeg('seg-stdc', 'stdC');
   bindSeg('seg-stdcpp', 'stdCpp');
+  bindSeg('seg-code-theme', 'codeTheme');
 
   $('#m-args').addEventListener('input', (e) => { s.args = e.target.value; saveSettings(); });
 
@@ -1112,6 +1123,13 @@ function settingsModal() {
     e.currentTarget.classList.toggle('on', s.realtimeLint);
     saveSettings();
     runLintNow();
+  });
+
+  $('#m-brk').addEventListener('click', (e) => {
+    s.bracketColors = !s.bracketColors;
+    e.currentTarget.classList.toggle('on', s.bracketColors);
+    editor.setBracketColors(s.bracketColors);
+    saveSettings();
   });
 
   $('#m-prefill-on').addEventListener('click', (e) => {
@@ -1182,9 +1200,12 @@ function settingsModal() {
 
 function applySettings() {
   document.documentElement.dataset.theme = state.settings.theme;
+  document.documentElement.dataset.codeTheme = state.settings.codeTheme;
   editor.setFontFamily(codeFontCss(state.settings.fontFamily));
   editor.setFontSize(state.settings.fontSize);
   editor.setIndentGuides(state.settings.indentGuides);
+  editor.setCodeTheme(state.settings.codeTheme);
+  editor.setBracketColors(state.settings.bracketColors);
   // 内置字体先预热：否则第一帧用回退字体量宽度，行号会短暂偏一下
   const fid = state.settings.fontFamily;
   if ((fid === 'jetbrains' || fid === 'sourcecode') && document.fonts) {
@@ -1239,18 +1260,24 @@ function init() {
     onSave: () => { if (state.active) { state.vfs.write(state.active, editor.value); toast('已保存'); } }
   });
   editor.onZoom = (fs) => { state.settings.fontSize = fs; $('#st-font').textContent = fs; saveSettings(); };
+  // 先定好配色再加载文件：第一次 render 就用对，省掉一次整篇重绘
+  editor.codeTheme = state.settings.codeTheme === 'vscode' ? 'vscode' : 'classic';
+  editor.bracketColors = !!state.settings.bracketColors;
   if (new URLSearchParams(location.search).has('debug')) window.__ed = editor;
   window.__pc = {
     state, plugins, openFile, renderTree, runActive, editor,
     openPlugin, openFilesView, openDrawer, closeDrawer, openModal, closeModal,
     settingsModal, checkUpdate, openExternal, runLintNow,
     showPanel, switchPanelTab, setPanelCollapsed, isPanelCollapsed, isRealTap,
+    setCodeTheme: (t) => { state.settings.codeTheme = t === 'vscode' ? 'vscode' : 'classic'; applySettings(); },
+    setBracketColors: (on) => { state.settings.bracketColors = !!on; applySettings(); },
     appInfo: { name: APP_NAME, version: APP_VERSION, code: APP_VERSION_CODE, repo: REPO_URL }
   };
 
   document.documentElement.dataset.theme = state.settings.theme;
   editor.setFontSize(state.settings.fontSize);
   editor.setIndentGuides(state.settings.indentGuides);
+  document.documentElement.dataset.codeTheme = editor.codeTheme;
   $('#st-font').textContent = editor.fontSize;
 
   renderTree();

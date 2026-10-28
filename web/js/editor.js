@@ -6,6 +6,17 @@ const PAIRS = { '(': ')', '[': ']', '{': '}', '"': '"', "'": "'" };
 const CLOSERS = new Set([')', ']', '}']);
 const INDENT = '    ';
 const MAX_GUIDES = 16;
+// 差异窗口外需要重绘的行数超过这个值，整篇重建一次反而更快（括号着色时会触发）
+const PATCH_REBUILD_LIMIT = 400;
+// 括号重着色：同步阶段只处理可见那一小段，其余分帧追平。
+// 改 className 会让浏览器重算这一片的样式，一次改几千个 class 要 40ms+，绝不能同步做完。
+const BR_SYNC_MAX = 40;
+const BR_CHUNK = 200;
+const EMPTY_ARR = [];
+const BRK_CHARS = { '(': 1, ')': 1, '[': 1, ']': 1, '{': 1, '}': 1 };
+// 括号颜色写成 style.color：改 color 只会触发重绘，改 className 会让浏览器按"可能影响布局"处理，
+// 2000 行上要整块重排 40ms+。值仍是 CSS 变量，主题切换照常生效。
+const BR_COLOR = { d0: 'var(--br-0)', d1: 'var(--br-1)', d2: 'var(--br-2)', bku: 'var(--br-bad)' };
 
 /** 一行前导空白 = 几个缩进层级（空格 1 列，Tab 补到 4 的整数倍） */
 function indentLevels(line) {
@@ -19,6 +30,10 @@ function indentLevels(line) {
   const n = Math.ceil(cols / 4);
   return n > MAX_GUIDES ? MAX_GUIDES : n;
 }
+
+// 每行的括号 class 摘要（"d0,d1,bku"）由 hl.js 顺带产出，
+// 比较两版代码时用它低成本判断"这行只是括号颜色变了，还是结构也变了"
+
 
 export class CodeEditor {
   constructor({ ta, hlCode, codeWrap, acEl, sigEl, onChange, onCaret, onRun, onSave }) {
@@ -38,6 +53,13 @@ export class CodeEditor {
     this.lang = 'cpp';
     this.fontSize = 13;
     this.lineHeight = 20;
+    this.codeTheme = 'classic';    // classic | vscode
+    this.bracketColors = false;    // 括号配对颜色化
+    this._br = [];                 // 括号位置：[{line, col, idx, ch, depth, pair}]
+    this._brUn = [];               // 未闭合的开括号
+    this._brRow = [];              // 每行括号 class 摘要（"d0,d1,bku"）
+    this._brMap = null;            // 每行一个数组：该行的括号在 _br 里的下标（懒建）
+    this._bkmEls = null;           // 当前挂着"配对高亮"的元素
     this._symCache = null;        // 符号表懒计算
     this._rows = null;            // 当前渲染出的行元素
     this._src = null;             // 每行的高亮 HTML
@@ -89,9 +111,40 @@ export class CodeEditor {
   // ── 渲染 ─────────────────────────────
   // 行号不再是独立列：每行渲染成 "<div>行号+代码</div>"，两者共享同一行盒与基线，
   // 字体度量差异（Android WebView 中文回退、亚像素舍入）不可能再造成累积错位。
+  /** 高亮层参数：配色模式 + 括号着色 */
+  _hlOpts() {
+    const br = this.bracketColors;
+    return {
+      vscode: this.codeTheme === 'vscode',
+      brackets: br,
+      brOut: br ? this._br : null,
+      unmatchedOut: br ? this._brUn : null,
+      rowClsOut: br ? this._brRow : null
+    };
+  }
+
+  /** 配色 / 括号着色切换：整篇重算（切设置是低频操作，全量重绘更省心） */
+  setCodeTheme(theme) {
+    const next = theme === 'vscode' ? 'vscode' : 'classic';
+    if (next === this.codeTheme) return;
+    this.codeTheme = next;
+    this.render();
+  }
+
+  setBracketColors(on) {
+    const next = !!on;
+    if (next === this.bracketColors) return;
+    this.bracketColors = next;
+    this.render();
+  }
+
   render() {
+    // 整篇重建会覆盖所有行，之前排队的分帧重着色直接作废
+    if (this._brRaf) { cancelAnimationFrame(this._brRaf); this._brRaf = 0; }
+    this._brFrom = null;
     const v = this.ta.value;
-    const src = highlightLines(v);
+    this._brRow = [];
+    const src = highlightLines(v, this._hlOpts());
     const lines = v.split('\n');
     const total = src.length;
     this._setLnPad(total);
@@ -103,7 +156,16 @@ export class CodeEditor {
     this._src = src;
     this._lines = lines;
     this._symCache = null;
+    this._brMap = null;
     this.syncScroll();
+    this._recolorAll();
+    this._afterPaint();
+  }
+
+  /** 整篇按行摘要刷一遍括号 class（换配色 / 首次渲染用，2000 行约 15ms） */
+  _recolorAll() {
+    if (!this.bracketColors || !this._rows) return;
+    for (let i = 0; i < this._rows.length; i++) this._recolorRow(i);
   }
 
   /**
@@ -118,7 +180,9 @@ export class CodeEditor {
     const olds = this._lines;
     if (lines.length === olds.length && lines.every((s, i) => s === olds[i])) { this.syncScroll(); return; }
 
-    const src = highlightLines(v);
+    const prevBrRow = this._brRow;
+    this._brRow = [];
+    const src = highlightLines(v, this._hlOpts());
     const oldSrc = this._src;
     const total = src.length;
     this._setLnPad(total);
@@ -133,16 +197,166 @@ export class CodeEditor {
     this._src = src;
     this._lines = lines;
     this._symCache = null;
+    this._brMap = null;
     this._replaceRows(lo, hiN, hiO);
+    // 新插入的行只有占位 class，深度得按摘要补上
+    if (this.bracketColors) for (let i = lo; i < hiN; i++) this._recolorRow(i);
 
-    // 差异窗口外：文本没变但高亮可能变（例如刚敲下 /* 让后面整段变注释）
-    for (let i = 0; i < lo; i++) if (src[i] !== oldSrc[i]) this._paintRow(i);
+    // 差异窗口外：文本没变但高亮可能变（例如刚敲下 /* 让后面整段变注释；
+    // 开了括号着色时，敲一个 ( 也会让后续所有行的括号颜色整体偏移）
+    const dirty = [];
+    const brOnly = [];
     const shift = total - olds.length;
-    for (let i = hiN; i < total; i++) {
+    const check = (i) => {
       const o = i - shift;
-      if (o >= 0 && o < oldSrc.length && src[i] !== oldSrc[o]) this._paintRow(i);
+      if (o < 0 || o >= oldSrc.length) { dirty.push(i); return; }
+      if (src[i] !== oldSrc[o]) { dirty.push(i); return; }
+      // 文本没变，但括号深度整体偏移了 → 只要换 class
+      if (this.bracketColors && this._brRow[i] !== prevBrRow[o]) brOnly.push(i);
+    };
+    for (let i = 0; i < lo; i++) check(i);
+    for (let i = hiN; i < total; i++) check(i);
+
+    // 上千行逐个改 innerHTML 比整篇重建还慢，超过阈值就换一条路
+    if (dirty.length > PATCH_REBUILD_LIMIT) {
+      let html = '';
+      for (let i = 0; i < total; i++) html += this._rowHtml(i, src[i], lines[i]);
+      this.hlCode.innerHTML = html;
+      this._rows = Array.from(this.hlCode.children);
+    } else {
+      for (const i of dirty) this._paintRow(i);
     }
+    // 括号层：先同步处理可见区（brOnly 升序，靠前就是光标附近），剩下的分帧追
+    const syncN = Math.min(brOnly.length, BR_SYNC_MAX);
+    for (let k = 0; k < syncN; k++) {
+      const i = brOnly[k];
+      if (!this._recolorRow(i)) this._paintRow(i);
+    }
+    if (brOnly.length > syncN) this._queueBrTail(brOnly[syncN]);
     this.syncScroll();
+    this._afterPaint();
+  }
+
+  /** 括号重着色的尾巴：分帧处理，每帧 BR_CHUNK 行，不阻塞输入 */
+  _queueBrTail(from) {
+    if (this._brFrom == null || from < this._brFrom) this._brFrom = from;
+    if (this._brRaf) return;
+    const step = () => {
+      this._brRaf = 0;
+      const total = this._rows ? this._rows.length : 0;
+      const start = this._brFrom == null ? 0 : this._brFrom;
+      const end = Math.min(total, start + BR_CHUNK);
+      for (let i = start; i < end; i++) {
+        if (!this._recolorRow(i)) this._paintRow(i);
+      }
+      if (end < total) { this._brFrom = end; this._brRaf = requestAnimationFrame(step); }
+      else { this._brFrom = null; this._afterPaint(); }
+    };
+    this._brRaf = requestAnimationFrame(step);
+  }
+
+  /**
+   * 只把一行的括号 class 换掉（括号深度整体偏移时的高频路径）。
+   * 2000 行文件里敲一个 ( 会让后面每一行的括号层都变，逐行重建 innerHTML 要 260ms；
+   * 括号 span 都是 .lt 的直接子元素，按 children 扫一遍只改 className，量级低一个数量级。
+   * @returns {boolean} false 表示行内括号个数变了，得整行重绘
+   */
+  _recolorRow(i) {
+    const row = this._rows[i];
+    const lt = row && row.children[2];
+    if (!lt) return false;
+    const want = this._brRow[i];
+    const arr = want ? want.split(',') : EMPTY_ARR;
+    const kids = lt.children;
+    let j = 0;
+    for (let k = 0; k < kids.length; k++) {
+      const el = kids[k];
+      const c = el.className;
+      if (c.charCodeAt(0) !== 98 || c.charCodeAt(1) !== 107) continue;   // 不是 .bk
+      if (j >= arr.length) return false;                                  // 多了括号，交给整行重绘
+      const col = BR_COLOR[arr[j]] || BR_COLOR.d0;
+      if (el.style.color !== col) el.style.color = col;
+      j++;
+    }
+    return j === arr.length;
+  }
+
+  /** 重绘之后的收尾：未闭合括号标红 + 重挂光标配对高亮（innerHTML 重建会丢掉它们） */
+  _afterPaint() {
+    if (!this.bracketColors) { this._bkmEls = null; return; }
+    for (const u of this._brUn) {
+      const el = this._bkEl(u.line, u.idx);
+      if (el && el.style.color !== BR_COLOR.bku) el.style.color = BR_COLOR.bku;
+    }
+    this.updateBrMatch();
+  }
+
+  /** 第 line 行第 idx 个括号 span */
+  _bkEl(line, idx) {
+    const row = this._rows && this._rows[line];
+    if (!row) return null;
+    const lt = row.children[2];
+    if (!lt) return null;
+    return lt.querySelectorAll('.bk')[idx] || null;
+  }
+
+  /** 光标紧邻的括号 + 它的配对一起高亮（VSCode 的 matchBrackets） */
+  updateBrMatch() {
+    const old = this._bkmEls;
+    if (old) {
+      for (const el of old) if (el) el.classList.remove('bkm');
+      this._bkmEls = null;
+    }
+    if (!this.bracketColors || !this._rows || !this._br.length) return;
+    const ta = this.ta;
+    if (ta.selectionStart !== ta.selectionEnd) return;
+    // 先做最便宜的判断：光标左右都不是括号就直接退出，别为一次按键重建整行索引
+    const v = ta.value, p = ta.selectionStart;
+    const cL = v[p - 1] || '', cR = v[p] || '';
+    if (!BRK_CHARS[cL] && !BRK_CHARS[cR]) return;
+    const { line, col } = this._posToLineCol(p);
+    const arr = this._brMapOf()[line];
+    if (!arr) return;
+    // 光标左右各试一个位置（点在括号前 / 括号后都算贴住）
+    let hit = -1;
+    for (const bi of arr) {
+      const b = this._br[bi];
+      if (b.col === col) { hit = bi; break; }
+      if (b.col === col - 1) hit = bi;
+    }
+    if (hit < 0) return;
+    const a = this._br[hit];
+    const els = [];
+    const ea = this._bkEl(a.line, a.idx);
+    if (ea) { ea.classList.add('bkm'); els.push(ea); }
+    if (a.pair >= 0) {
+      const b = this._br[a.pair];
+      const eb = this._bkEl(b.line, b.idx);
+      if (eb) { eb.classList.add('bkm'); els.push(eb); }
+    }
+    if (els.length) this._bkmEls = els;
+  }
+
+  _brMapOf() {
+    if (!this._brMap) {
+      const byLine = [];
+      for (let i = 0; i < this._br.length; i++) {
+        const l = this._br[i].line;
+        (byLine[l] || (byLine[l] = [])).push(i);
+      }
+      this._brMap = byLine;
+    }
+    return this._brMap;
+  }
+
+  /** 文档偏移 → 行号（0 基）+ 行内列（0 基） */
+  _posToLineCol(pos) {
+    const v = this.ta.value;
+    let line = 0, lineStart = 0;
+    for (let i = pos - 1; i >= 0; i--) {
+      if (v.charCodeAt(i) === 10) { line++; if (!lineStart) lineStart = i + 1; }
+    }
+    return { line, col: pos - lineStart };
   }
 
   _setLnPad(total) {
@@ -213,7 +427,10 @@ export class CodeEditor {
     if (row.className !== cls) row.className = cls;
     const lt = row.children[2];
     const html = this._src[i] || '';
-    if (lt && lt.innerHTML !== html) lt.innerHTML = html;
+    if (lt && lt.innerHTML !== html) {
+      lt.innerHTML = html;
+      if (this.bracketColors) this._recolorRow(i);
+    }
     const gi = row.children[0];
     if (gi) {
       const w = (this.guides ? indentLevels(this._lines[i] || '') : 0) * 4 + 'ch';
@@ -402,6 +619,7 @@ export class CodeEditor {
     const line = before.split('\n').length;
     const col = pos - before.lastIndexOf('\n');
     this.onCaret(line, col, pos);
+    this.updateBrMatch();
   }
 
   /**

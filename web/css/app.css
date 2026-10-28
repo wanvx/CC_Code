@@ -38,7 +38,20 @@
   --tk-pre: #82aaff;   /* 预处理 */
   --tk-fn: #82d8a0;    /* 函数名 */
   --tk-punc: #98a4b8;
+  /* 这几项是 vscode 配色模式才分出来的层：classic 下全部回落到原色，视觉零变化 */
+  --tk-ctl: var(--tk-key);      /* 控制流关键字 */
+  --tk-kwtype: var(--tk-type);  /* 内置类型 */
+  --tk-const: var(--tk-type);   /* true / false / NULL */
+  --tk-id: var(--fg);           /* 普通标识符 */
+  --tk-inc: var(--tk-pre);      /* #include 的目标部分 */
   --guide: #2c3342;    /* 缩进参考线 */
+  /* 括号配对颜色：VSCode bracketPairColorization 的三色循环 + 未匹配红 */
+  --br-0: #ffd700;
+  --br-1: #da70d6;
+  --br-2: #179fff;
+  --br-bad: #ff1212;
+  --br-match-bg: rgba(122, 170, 255, .18);
+  --br-match-line: rgba(150, 190, 255, .55);
 }
 :root[data-theme="light"] {
   --bg: #ffffff;
@@ -60,6 +73,47 @@
   --tk-fn: #1a7f52;
   --tk-punc: #4a5464;
   --guide: #dde1e8;
+  --br-match-bg: rgba(40, 110, 220, .13);
+  --br-match-line: rgba(30, 90, 190, .45);
+  /* VSCode 的 #FFD700 在白底上几乎看不见，浅色主题压深一档，观感仍是"金" */
+  --br-0: #b8860b;
+}
+
+/* ── VSCode 配色（只作用于代码区，界面壳不动）─────────────────────
+   Dark+ 的 TextMate scope 近似映射：
+     keyword.control  #C586C0   storage.type  #569CD6   entity.name.type #4EC9B0
+     entity.name.fn   #DCDCAA   string        #CE9178   constant.numeric  #B5CEA8
+     comment          #6A9955   variable      #9CDCFE   preprocessor      #C586C0 */
+:root[data-code-theme="vscode"] {
+  --tk-ctl: #c586c0;
+  --tk-key: #569cd6;
+  --tk-kwtype: #569cd6;
+  --tk-const: #569cd6;
+  --tk-type: #4ec9b0;
+  --tk-id: #9cdcfe;
+  --tk-str: #ce9178;
+  --tk-num: #b5cea8;
+  --tk-com: #6a9955;
+  --tk-pre: #c586c0;
+  --tk-inc: #ce9178;
+  --tk-fn: #dcdcaa;
+  --tk-punc: #d4d4d4;
+}
+/* Light+ 对应色（VSCode 的括号三色不随主题变，保持原值） */
+:root[data-code-theme="vscode"][data-theme="light"] {
+  --tk-ctl: #af00db;
+  --tk-key: #0000ff;
+  --tk-kwtype: #0000ff;
+  --tk-const: #0000ff;
+  --tk-type: #267f99;
+  --tk-id: #001080;
+  --tk-str: #a31515;
+  --tk-num: #098658;
+  --tk-com: #008000;
+  --tk-pre: #af00db;
+  --tk-inc: #a31515;
+  --tk-fn: #795e26;
+  --tk-punc: #000000;
 }
 
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
@@ -307,6 +361,28 @@ svg.fill { fill: currentColor; stroke: none; }
 .tk-pre { color: var(--tk-pre); }
 .tk-fn { color: var(--tk-fn); }
 .tk-punc { color: var(--tk-punc); }
+.tk-ctl { color: var(--tk-ctl); }
+.tk-kwtype { color: var(--tk-kwtype); }
+.tk-const { color: var(--tk-const); }
+.tk-id { color: var(--tk-id); }
+.tk-inc { color: var(--tk-inc); }
+
+/* VSCode 模式下普通标识符不单独包 span（省掉上万个节点），由代码层继承标识符色：
+   VSCode 里变量是浅蓝 #9CDCFE，标点近白 #D4D4D4，这里统一取前者，肉眼看不出差别 */
+:root[data-code-theme="vscode"] #hl .lt { color: var(--tk-id); }
+
+/* 括号配对颜色（VSCode bracketPairColorization）：按嵌套深度 0/1/2 循环 */
+#hl .bk { color: inherit; }
+#hl .bk.d0 { color: var(--br-0); }
+#hl .bk.d1 { color: var(--br-1); }
+#hl .bk.d2 { color: var(--br-2); }
+#hl .bk.bku { color: var(--br-bad); }
+/* 光标旁的括号与它的配对对象（VSCode matchBrackets：底纹 + 细框） */
+#hl .bk.bkm {
+  background: var(--br-match-bg);
+  border-radius: 2px;
+  box-shadow: inset 0 0 0 1px var(--br-match-line);
+}
 
 /* ── 面板 ─────────────────────────────── */
 #panel {

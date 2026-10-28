@@ -1,9 +1,9 @@
 {
   "name": "CC_Code",
-  "version": "1.5.0",
-  "versionCode": 10,
-  "released": "2026-10-27",
-  "notes": "修复：补全弹窗出现时正在编辑的那一行不再跳动，输入输出面板开合时光标行也钉在原地（改为增量重绘，2000 行单次编辑 87ms → 22ms）\n修复：蓝牙鼠标休眠重连时误发的点击不再把输入输出面板弹出来，面板开合状态会被记住\n新增：设置里可选代码字体，系统等宽 / JetBrains Mono / Source Code Pro / 系统无衬线，前两款内置离线可用",
+  "version": "1.6.0",
+  "versionCode": 11,
+  "released": "2026-10-28",
+  "notes": "新增：VSCode 染色模式（设置 → 代码配色），按 Dark+ / Light+ 的语义分层：控制流紫红、内置类型蓝、STL 类型青、函数黄、字符串橙，跟随深色 / 浅色主题自动切换\n新增：括号配对着色（可单独开启），按嵌套深度金 / 紫 / 蓝三色循环，未闭合的括号标红，光标贴住括号时和它的配对一起高亮",
   "apk": "https://github.com/wanvx/CC_Code/releases/latest/download/CC_Code.apk",
   "web": "https://pocketcode-ide.app.workbuddy.host/?sharecode=S62VZQDDME"
 }
