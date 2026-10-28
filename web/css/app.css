@@ -43,6 +43,8 @@
   --tk-kwtype: var(--tk-type);  /* 内置类型 */
   --tk-const: var(--tk-type);   /* true / false / NULL */
   --tk-id: var(--fg);           /* 普通标识符 */
+  --tk-fg: var(--fg);           /* 默认前景（标点 / 运算符） */
+  --tk-esc: var(--tk-str);      /* 字符串里的转义序列 \n \t */
   --tk-inc: var(--tk-pre);      /* #include 的目标部分 */
   --guide: #2c3342;    /* 缩进参考线 */
   /* 括号配对颜色：VSCode bracketPairColorization 的三色循环 + 未匹配红 */
@@ -91,6 +93,8 @@
   --tk-const: #569cd6;
   --tk-type: #4ec9b0;
   --tk-id: #9cdcfe;
+  --tk-fg: #d4d4d4;
+  --tk-esc: #d7ba7d;
   --tk-str: #ce9178;
   --tk-num: #b5cea8;
   --tk-com: #6a9955;
@@ -107,6 +111,8 @@
   --tk-const: #0000ff;
   --tk-type: #267f99;
   --tk-id: #001080;
+  --tk-fg: #000000;
+  --tk-esc: #ee0000;
   --tk-str: #a31515;
   --tk-num: #098658;
   --tk-com: #008000;
@@ -365,11 +371,13 @@ svg.fill { fill: currentColor; stroke: none; }
 .tk-kwtype { color: var(--tk-kwtype); }
 .tk-const { color: var(--tk-const); }
 .tk-id { color: var(--tk-id); }
+.tk-esc { color: var(--tk-esc); }
 .tk-inc { color: var(--tk-inc); }
 
-/* VSCode 模式下普通标识符不单独包 span（省掉上万个节点），由代码层继承标识符色：
-   VSCode 里变量是浅蓝 #9CDCFE，标点近白 #D4D4D4，这里统一取前者，肉眼看不出差别 */
-:root[data-code-theme="vscode"] #hl .lt { color: var(--tk-id); }
+/* VSCode 模式下：标识符单独包 .tk-id，其余（标点、运算符、括号）落默认前景色。
+   Dark+ 的默认前景是 #D4D4D4 近白，标识符是 #9CDCFE 浅蓝 —— 两者必须分开，
+   否则整篇都是蓝的，反而比 VSCode 更花 */
+:root[data-code-theme="vscode"] #hl .lt { color: var(--tk-fg); }
 
 /* 括号配对颜色（VSCode bracketPairColorization）：按嵌套深度 0/1/2 循环 */
 #hl .bk { color: inherit; }

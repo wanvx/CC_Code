@@ -106,6 +106,7 @@ node tests/v9-scroll-font-panel.mjs # 弹窗不动 / 面板开合 / 孤立点击
 node tests/v10-perf.mjs             # 增量重绘性能（300 / 2000 行）
 node tests/v12-bracket-colors.mjs   # VSCode 配色 / 括号三色 / 配对高亮 / 性能
 node tests/lint-unit.mjs            # 实时检查规则单测（无需浏览器）
+node tests/hl-unit.mjs              # 高亮分色单测：标识符 / 标点 / 赋值位（无需浏览器）
 node tests/v2-smoke.mjs    # 文件树 / 编译 / cph / 设置
 node tests/inline-ln.mjs   # 行号与代码对齐回归
 ```

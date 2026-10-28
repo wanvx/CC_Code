@@ -39,10 +39,15 @@ const TY_STL = new Set([
 const CONST_LIT = new Set(['true', 'false', 'NULL']);
 const TY = new Set([...TY_BASIC, ...TY_STL, ...CONST_LIT]);
 
-const RE_STR = String.raw`(\/\/[^\n]*|\/\*[\s\S]*?(?:\*\/|$)|^[ \t]*#[ \t]*[a-zA-Z_]+[^\n]*|"(?:\\[\s\S]|[^"\\\n])*"?|'(?:\\[\s\S]|[^'\\\n])*'?|` + '`[^`]*`?' + String.raw`|\b\d[\w.]*\b|[A-Za-z_]\w*)`;
+const RE_STR = String.raw`(\/\/[^\n]*|\/\*[\s\S]*?(?:\*\/|(?![\s\S]))|^[ \t]*#[ \t]*[a-zA-Z_]+[^\n]*|"(?:\\[\s\S]|[^"\\\n])*"?|'(?:\\[\s\S]|[^'\\\n])*'?|` + '`[^`]*`?' + String.raw`|\b\d[\w.]*\b|[A-Za-z_]\w*)`;
 const RE = new RegExp(RE_STR, 'gm');
 // 预处理行里的目标部分：<cstdio> / "my.h"（VSCode 里是字符串色，classic 下与指令同色）
 const RE_INC = /(<[^>\n]*>|"[^"\n]*")/g;
+// vscode 模式补充：指令名 / 宏名 / 指令尾部分段 / 字符串里的转义与格式占位符
+const RE_DIRECTIVE = /^#[ \t]*([A-Za-z_]+)/;
+const RE_MACRO = /^([ \t]+)([A-Za-z_]\w*)/;
+const RE_PRE_PART = /(<[^>\n]*>|"[^"\n]*"|'[^'\n]*')|(\d[\w.]*)|([A-Za-z_]\w*)/g;
+const RE_STR_PART = /(%[-+ #0]*\d*(?:\.\d+)?[diouxXeEfgGaAcsp%])|(\\.)/g;
 
 const BRK_OPEN = { '(': ')', '[': ']', '{': '}' };
 const BRK_CLOSE = { ')': '(', ']': '[', '}': '{' };
@@ -66,10 +71,14 @@ function clsClassic(t, next) {
 
 /**
  * vscode 模式：按 VSCode 的 TextMate scope 近似分层。
- * 普通标识符返回 null —— 不给每个变量包 span（2000 行会多出上万个节点，拖慢增量重绘），
- * 改由 .lt 继承 --tk-id 的颜色，视觉一致。
+ * 普通标识符 → tk-id（Dark+ #9CDCFE / Light+ #001080）；
+ * 标点、运算符、括号返回 null，落 .lt 的默认前景（#D4D4D4 / #000000）。
+ * 两者必须分开 —— VSCode 里"变量淡蓝、结构近白"，全染成蓝反而更花。
+ *
+ * 大写开头的标识符若处在声明位置（`Foo f;` / `Base {` / `Node* p =`），按类型名着色，
+ * 对应 entity.name.type —— 没有语义分析，只能靠这个形状判断；`MAX_N;` 之类不受影响。
  */
-function clsVscode(t, next, prevKw) {
+function clsVscode(t, next, prevKw, after) {
   if (KW_CTL.has(t)) return 'tk-ctl';
   if (KW_STOR.has(t)) return 'tk-key';
   if (TY_BASIC.has(t)) return 'tk-kwtype';
@@ -77,7 +86,19 @@ function clsVscode(t, next, prevKw) {
   if (CONST_LIT.has(t)) return 'tk-const';
   if (prevKw && TAG_KW.has(prevKw)) return 'tk-type';   // struct Node / using Vec = ...
   if (next === '(') return 'tk-fn';
+  const c0 = t.charCodeAt(0);
+  if (c0 === 95 || isAlpha(c0)) {
+    if (c0 >= 65 && c0 <= 90 && RE_TYPE_USE.test(after || '')) return 'tk-type';
+    return 'tk-id';
+  }
   return null;
+}
+
+// 声明位置：`Foo f;` `Foo* p =` `Base {` `Vec&& v)` —— 大写标识符后面紧跟的是「另一个名字」
+const RE_TYPE_USE = /^[ \t]*(?:[*&]+[ \t]*)?[A-Za-z_]\w*[ \t]*(?:[=;,)}\]:]|$)|^[ \t]*\{/;
+
+function isAlpha(c) {
+  return (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c > 127;
 }
 
 export function highlightHtml(code) {
@@ -196,6 +217,23 @@ export function highlightLines(code, opts) {
 
   // 预处理行：指令部分 tk-pre，目标部分 tk-inc
   const putPre = (raw) => {
+    const md = vs ? RE_DIRECTIVE.exec(raw) : null;
+    if (md) {
+      // VSCode：`#define` 紫、宏名蓝（entity.name.function.preprocessor）
+      cur += '<span class="tk-pre">' + esc(md[0]) + '</span>';
+      const dir = md[1];
+      let rest = raw.slice(md[0].length);
+      if (dir === 'define' || dir === 'undef') {
+        const nm = RE_MACRO.exec(rest);
+        if (nm) {
+          cur += esc(nm[1]) + '<span class="tk-key">' + esc(nm[2]) + '</span>';
+          rest = rest.slice(nm[0].length);
+        }
+      }
+      putPreRest(rest);
+      col += raw.length;
+      return;
+    }
     RE_INC.lastIndex = 0;
     let i = 0, mm;
     while ((mm = RE_INC.exec(raw)) !== null) {
@@ -207,10 +245,38 @@ export function highlightLines(code, opts) {
     col += raw.length;
   };
 
+  /** 指令头之后的部分：头文件串 / 数字 / 标识符分开着色，其余落默认前景 */
+  const putPreRest = (raw) => {
+    RE_PRE_PART.lastIndex = 0;
+    let i = 0, mm;
+    while ((mm = RE_PRE_PART.exec(raw)) !== null) {
+      if (mm.index > i) cur += esc(raw.slice(i, mm.index));
+      const s = mm[0];
+      const cls = mm[1] ? 'tk-inc' : mm[2] ? 'tk-num' : 'tk-id';
+      cur += '<span class="' + cls + '">' + esc(s) + '</span>';
+      i = mm.index + s.length;
+    }
+    if (i < raw.length) cur += esc(raw.slice(i));
+  };
+
+  /** 字符串：VSCode 把 `\n` 标成转义色、`%d` 标成 variable 色，这里照做 */
+  const putStr = (raw) => {
+    RE_STR_PART.lastIndex = 0;
+    let i = 0, mm;
+    while ((mm = RE_STR_PART.exec(raw)) !== null) {
+      if (mm.index > i) cur += '<span class="tk-str">' + esc(raw.slice(i, mm.index)) + '</span>';
+      cur += '<span class="' + (mm[2] ? 'tk-esc' : 'tk-id') + '">' + esc(mm[0]) + '</span>';
+      i = mm.index + mm[0].length;
+    }
+    if (i < raw.length) cur += '<span class="tk-str">' + esc(raw.slice(i)) + '</span>';
+    col += raw.length;
+  };
+
   /** 把一段原文（可能含换行）落到行缓冲里；cls 为 null 时可选做括号扫描 */
   const put = (raw, cls) => {
     if (!raw) return;
     if (cls === 'tk-pre' && raw.indexOf('\n') === -1) { putPre(raw); return; }
+    if (vs && cls === 'tk-str' && raw.indexOf('\n') === -1) { putStr(raw); return; }
     const parts = raw.split('\n');
     for (let i = 0; i < parts.length; i++) {
       if (i) newline();
@@ -244,8 +310,9 @@ export function highlightLines(code, opts) {
     else if (c === '"' || c === "'" || c === '`') cls = 'tk-str';
     else if (c >= '0' && c <= '9') cls = 'tk-num';
     else {
-      const next = code.slice(m.index + t.length, m.index + t.length + 1);
-      cls = vs ? clsVscode(t, next, prevKw) : clsClassic(t, next);
+      const at = m.index + t.length;
+      const next = code.slice(at, at + 1);
+      cls = vs ? clsVscode(t, next, prevKw, code.slice(at, at + 24)) : clsClassic(t, next);
       prevKw = t;
     }
     put(t, cls);

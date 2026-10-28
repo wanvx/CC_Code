@@ -1,9 +1,9 @@
 {
   "name": "CC_Code",
-  "version": "1.6.0",
-  "versionCode": 11,
+  "version": "1.6.1",
+  "versionCode": 12,
   "released": "2026-10-28",
-  "notes": "新增：VSCode 染色模式（设置 → 代码配色），按 Dark+ / Light+ 的语义分层：控制流紫红、内置类型蓝、STL 类型青、函数黄、字符串橙，跟随深色 / 浅色主题自动切换\n新增：括号配对着色（可单独开启），按嵌套深度金 / 紫 / 蓝三色循环，未闭合的括号标红，光标贴住括号时和它的配对一起高亮",
+  "notes": "修复：VSCode 配色的前景色还原不准 —— 之前标点、运算符、括号也被染成浅蓝，整篇发蓝。现在标识符才是浅蓝（Dark+ #9CDCFE / Light+ #001080），其余落默认前景（#D4D4D4 / #000000），与 VS Code 一致\n修复：多行块注释只把第一行染成注释色，续行被当成代码\n新增：字符串里的转义序列（\\n \\t）与格式占位符（%d %s）按 VS Code 的色分开\n新增：预处理指令分层更细 —— #define/#undef 的宏名用蓝色，指令后的数字用绿色\n新增：大写开头的标识符处在声明位置（Foo f; / Node* p）时按类型名着色",
   "apk": "https://github.com/wanvx/CC_Code/releases/latest/download/CC_Code.apk",
   "web": "https://pocketcode-ide.app.workbuddy.host/?sharecode=S62VZQDDME"
 }
