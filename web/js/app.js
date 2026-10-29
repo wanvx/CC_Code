@@ -9,8 +9,8 @@ const $ = (s) => document.querySelector(s);
 
 // ── 应用信息（检查更新用，发版时同步 version.json） ──
 const APP_NAME = 'CC_Code';
-const APP_VERSION = '1.7.0';
-const APP_VERSION_CODE = 13;
+const APP_VERSION = '1.8.0';
+const APP_VERSION_CODE = 14;
 const REPO_OWNER = 'wanvx';
 const REPO_NAME = 'CC_Code';
 const REPO_URL = 'https://github.com/' + REPO_OWNER + '/' + REPO_NAME;

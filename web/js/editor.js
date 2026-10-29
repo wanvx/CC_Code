@@ -67,7 +67,10 @@ export class CodeEditor {
     this.diags = new Map();       // 编译诊断：行号 → error / warning
     this.lintMap = new Map();     // 实时检查：行号 → error / warning
     this.acItems = [];
-    this.acIndex = -1;            // -1 = 还没用方向键挑，第一下 ↓ 落在第 1 项
+    this.acIndex = -1;            // -1 = 还没用方向键挑，第一下 ↓ 落在预选项上
+    this.acPreIdx = 0;            // 预选下标：默认第 1 项；前缀记忆命中时是上次选的那项
+    this._acWord = '';            // 上一次过滤用的词（打字追加时走增量过滤）
+    this._acMem = null;           // 前缀记忆：{ 词 → {label,t} }，懒加载 localStorage
     this.acOpen = false;
     this.acPrefix = '';
     this.acMember = false;
@@ -880,8 +883,19 @@ export class CodeEditor {
   showAc(manual, word) {
     const { word: w2, from } = this.wordPrefix();
     const prefix = word != null ? word : w2;
-    const items = suggestions(prefix, this.syms, this.acMember);
+    // 增量过滤（VS Code Refilter.Incr）：前缀在旧词上追加时，只在旧结果里再筛，
+    // 集合只收窄不引入新项 —— 打字时列表不「洗牌」
+    const inc = this.acOpen && this.acItems.length > 0 && prefix.startsWith(this._acWord) && prefix.length > this._acWord.length;
+    const cursorLine = this.ta.value.slice(0, this.ta.selectionStart).split('\n').length;
+    const items = suggestions(prefix, this.syms, this.acMember, {
+      prevItems: inc ? this.acItems : null,
+      prevWord: this._acWord,
+      cursorLine
+    });
+    this._acWord = prefix;
     if (!items.length) { this.hideAc(); return; }
+    // 前缀记忆（VS Code recentlyUsedByPrefix）：上次在这个词下选中的项，这次仍作预选
+    this.acPreIdx = this._acMemHit(prefix, items);
     // 候选列表没变就别重建 DOM（连续打字时列表通常只是整体不变）
     const sig = prefix + '\u0001' + this.acMember + '\u0001' + items.map((it) => it.label).join('\u0001');
     const sameList = this.acOpen && sig === this._acSig;
@@ -949,8 +963,8 @@ export class CodeEditor {
       const kindCls = it.kind === 'kw' ? 'kw' : it.kind === 'fn' || it.kind === 'mem' ? 'fn' : it.kind === 'ty' || it.kind === 'sym' ? 'ty' : 'sym';
       const kindTxt = it.kind === 'kw' ? 'K' : it.kind === 'fn' ? 'f' : it.kind === 'mem' ? 'm' : it.kind === 'sn' ? 'S' : 'T';
       const detail = (it.sig || it.doc || '').replace(/[<>]/g, (c) => (c === '<' ? '&lt;' : '&gt;'));
-      // acIndex = -1 时第一项带 pre（淡色预选）：说明 Tab 会插它，但方向键还没挑
-      const cls = i === this.acIndex ? ' sel' : (this.acIndex < 0 && i === 0 ? ' pre' : '');
+      // acIndex = -1 时预选项带 pre（淡色预选）：说明 Tab 会插它，但方向键还没挑
+      const cls = i === this.acIndex ? ' sel' : (this.acIndex < 0 && i === this.acPreIdx ? ' pre' : '');
       return '<div class="ac-item' + cls + '" data-i="' + i + '">' +
         '<span class="ac-kind ' + kindCls + '">' + kindTxt + '</span>' +
         '<span class="ac-label">' + it.label + '</span>' +
@@ -977,7 +991,7 @@ export class CodeEditor {
     const n = this.acItems.length;
     if (!n) return false;
     if (this.acIndex < 0) {
-      this.acIndex = 0;
+      this.acIndex = Math.min(this.acPreIdx, n - 1);   // 第一下落在预选项（记忆命中时不足第 1 项）
       this._lockScroll(() => this.renderAc());
       return true;
     }
@@ -988,9 +1002,10 @@ export class CodeEditor {
     return true;
   }
 
-  /** 当前会被接受的候选（未挑过就是第一项） */
+  /** 当前会被接受的候选（未挑过就是预选项；越界保护防列表变化后越界） */
   currentAcItem() {
-    return this.acItems[this.acIndex < 0 ? 0 : this.acIndex];
+    const i = this.acIndex < 0 ? Math.min(this.acPreIdx, this.acItems.length - 1) : this.acIndex;
+    return this.acItems[i];
   }
 
   hideAc() {
@@ -999,11 +1014,39 @@ export class CodeEditor {
     this.acEl.classList.add('hidden');
   }
 
+  // ── 前缀记忆（VS Code suggestMemory 的 recentlyUsedByPrefix 简化版）──
+  _acMemAll() {
+    if (!this._acMem) {
+      let m = {};
+      try { m = JSON.parse(localStorage.getItem('pocketcode.acmem.v1') || '{}') || {}; } catch (e) { /* 忽略 */ }
+      this._acMem = m;
+    }
+    return this._acMem;
+  }
+  _acMemHit(prefix, items) {
+    if (!prefix) return 0;
+    const rec = this._acMemAll()[prefix];
+    if (!rec) return 0;
+    const i = items.findIndex((it) => it.label === rec.label);
+    return i > 0 ? i : 0;   // 命中且不在首位才需要换预选；找不到（比如这次没匹配上）就回第 1 项
+  }
+  _acMemRemember(prefix, label) {
+    if (!prefix) return;
+    const mem = this._acMemAll();
+    mem[prefix] = { label, t: Date.now() };
+    const keys = Object.keys(mem);
+    if (keys.length > 100) {
+      keys.sort((a, b) => mem[a].t - mem[b].t).slice(0, keys.length - 100).forEach((k) => delete mem[k]);
+    }
+    try { localStorage.setItem('pocketcode.acmem.v1', JSON.stringify(mem)); } catch (e) { /* 忽略 */ }
+  }
+
   acceptAc() {
     if (!this.acOpen) return;
     const it = this.currentAcItem();
     this.hideAc();
     if (!it) return;
+    this._acMemRemember(this.acPrefix, it.label);
     this.justAccepted = it.label;
     const ta = this.ta;
     const s = ta.selectionStart;

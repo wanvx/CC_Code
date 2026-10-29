@@ -185,26 +185,67 @@ export function lookup(label) {
   return MAP.get(label) || null;
 }
 
-export function suggestions(prefix, symbols, memberMode) {
-  const p = (prefix || '').toLowerCase();
+/**
+ * VS Code 式模糊评分（权重表参考 vscode-completion/README.md §4.2，源码 fuzzyScorer.ts）：
+ *   +8 词首命中 / +5 连续命中（前 3 个字符）/ +3 连续命中（其后）/
+ *   +2 驼峰大写处命中 / +5 分隔符（_ - . : 空格）后命中 / +1 字符命中 / +1 大小写一致
+ * 词里的字符必须按顺序在标签里都找得到（子序列），否则不匹配返回 -1。
+ * 这一套权重同时解释了「前缀优先」和「缩写跳词」（如 spr→sprintf、mBS→myBestScore）。
+ */
+export function fuzzyScore(word, label) {
+  const m = word.length, n = label.length;
+  if (m === 0) return -100;          // 没有输入（触发字符场景）：统一分，靠就近/原始顺序排
+  if (n === 0 || m > n) return -1;
+  const wLow = word.toLowerCase(), lLow = label.toLowerCase();
+  let li = -1, wi = 0, score = 0, run = 0;
+  while (wi < m) {
+    let k = -1;
+    for (let j = li + 1; j < n; j++) { if (lLow[j] === wLow[wi]) { k = j; break; } }
+    if (k < 0) return -1;             // 剩下的字符对不上：不匹配
+    run = k === li + 1 ? Math.min(run + 1, 3) : 1;
+    score += 1;
+    if (word[wi] === label[k]) score += 1;
+    if (run > 1) score += run <= 3 ? 5 : 3;
+    if (k === 0) score += 8;
+    else {
+      const prev = label[k - 1];
+      if (prev === '_' || prev === '-' || prev === '.' || prev === ':' || prev === ' ') score += 5;
+      else if (/[a-z]/.test(prev) && /[A-Z]/.test(label[k])) score += 2;
+    }
+    li = k; wi++;
+  }
+  return score;
+}
+
+/**
+ * 候选过滤 + 排序（VS Code completionModel.ts 的结构）：
+ *   排序键 = 模糊分 desc → 就近距离 asc → 标签短者 asc → 原始顺序
+ * 就近距离（wordDistance 的简化版）：当前文件符号按行距计，内置库固定远，关键字永远垫底。
+ * 增量过滤（Refilter.Incr）：opts.prevItems 传入且前缀在旧词上追加时，只在旧结果里再筛
+ * —— 集合只会收窄、不引入新项，打字时列表不「洗牌」。
+ */
+export function suggestions(prefix, symbols, memberMode, opts = {}) {
+  const word = prefix || '';
+  const inc = opts.prevItems && word.startsWith(opts.prevWord || '\u0000') && word.length > (opts.prevWord || '').length;
+  // 源池：增量时沿用旧结果（保留各自 label/line 等字段），全量时 本文件符号 → 内置库
+  const pool = inc
+    ? opts.prevItems.map((it, i) => ({ it, idx: i, skipMember: true }))
+    : [...(symbols || []), ...DB].map((it, i) => ({ it, idx: i }));
   const out = [];
   const seen = new Set();
-  const push = (it, score) => {
-    if (seen.has(it.label)) return;
+  for (const { it, idx, skipMember } of pool) {
+    if (seen.has(it.label)) continue;
+    if (!skipMember && memberMode && it.kind !== 'mem' && it.kind !== 'kw') continue;
+    const sc = word ? fuzzyScore(word, it.label) : -100;   // 空词（触发字符场景）统一分，不过滤
+    if (word && sc < 0) continue;
     seen.add(it.label);
-    out.push({ ...it, score });
-  };
-  for (const s of symbols || []) {
-    const l = s.label.toLowerCase();
-    if (!p || l.startsWith(p)) push(s, l === p ? 0 : 1);
+    let dist;
+    if (it.kind === 'kw') dist = 2 << 20;                                       // 关键字哪都有，永远靠后（VS Code 同款）
+    else if (typeof it.line === 'number' && typeof opts.cursorLine === 'number') dist = Math.abs(it.line - opts.cursorLine);
+    else dist = 1 << 20;                                                        // 内置库：不近不远
+    out.push({ ...it, score: sc, dist, idx });
   }
-  for (const it of DB) {
-    const l = it.label.toLowerCase();
-    if (memberMode && it.kind !== 'mem' && it.kind !== 'kw') continue;
-    if (p && !l.startsWith(p) && !l.includes(p)) continue;
-    push(it, l === p ? 2 : l.startsWith(p) ? 4 : 5);
-  }
-  out.sort((a, b) => a.score - b.score || a.label.length - b.label.length || a.label.localeCompare(b.label));
+  out.sort((a, b) => b.score - a.score || a.dist - b.dist || a.label.length - b.label.length || a.idx - b.idx);
   return out.slice(0, 60);
 }
 
@@ -212,26 +253,27 @@ export function snippetFor(label) {
   return SNIPPETS[label] || null;
 }
 
-// 从源码中提取本地符号：函数、类/结构体、#define、变量
+// 从源码中提取本地符号：函数、类/结构体、#define、变量（带行号，供「就近加分」用）
 export function extractSymbols(code) {
+  const lineOf = (idx) => code.slice(0, idx).split('\n').length;
   const out = [];
   const seen = new Set();
-  const add = (label, kind, detail) => {
+  const add = (label, kind, detail, line) => {
     if (!label || seen.has(label) || label.length < 2) return;
     seen.add(label);
-    out.push({ label, kind, sig: detail || '', doc: '当前文件' });
+    out.push({ label, kind, sig: detail || '', doc: '当前文件', line });
   };
   let m;
   const reDef = /^[ \t]*#[ \t]*define[ \t]+([A-Za-z_]\w*)/gm;
-  while ((m = reDef.exec(code))) add(m[1], 'sym', '#define');
+  while ((m = reDef.exec(code))) add(m[1], 'sym', '#define', lineOf(m.index));
   const reType = /\b(?:struct|class|enum|union)\s+([A-Za-z_]\w*)/g;
-  while ((m = reType.exec(code))) add(m[1], 'ty', '类型');
+  while ((m = reType.exec(code))) add(m[1], 'ty', '类型', lineOf(m.index));
   const reFn = /^[ \t]*(?:template\s*<[^>]*>\s*)?(?:[A-Za-z_][\w:<>,*&\s\[\]]*?\s+)?([A-Za-z_]\w*)\s*\(([^;{)]*)\)\s*(?:const\s*)?\{/gm;
   while ((m = reFn.exec(code))) {
     if (['if', 'for', 'while', 'switch', 'catch', 'return', 'else', 'do'].includes(m[1])) continue;
-    add(m[1], 'fn', '(' + m[2].replace(/\s+/g, ' ').trim() + ')');
+    add(m[1], 'fn', '(' + m[2].replace(/\s+/g, ' ').trim() + ')', lineOf(m.index));
   }
   const reVar = /\b(?:int|char|float|double|long|short|bool|size_t|unsigned|std::string|std::vector<[^>]*>|auto)\s+([A-Za-z_]\w*)\s*[=;,\[)]/g;
-  while ((m = reVar.exec(code))) add(m[1], 'sym', '变量');
+  while ((m = reVar.exec(code))) add(m[1], 'sym', '变量', lineOf(m.index));
   return out;
 }

@@ -1,9 +1,9 @@
 {
   "name": "CC_Code",
-  "version": "1.7.0",
-  "versionCode": 13,
-  "released": "2026-10-28",
-  "notes": "新增：「2026」代码配色 —— 复刻 VS Code 1.113 起的默认主题 2026 Dark / 2026 Light：局部变量改中性色、参数暖橙、类型关键字偏红、函数紫、字符串浅蓝，整体少一点蓝。设置 → 代码配色里三档任选\n改名：原「经典」配色改称「默认」，原「VSCode」配色改称「经典」（只改显示名字，已保存的设置不受影响）\n新增：启动时自动检查更新，状态栏右下角常驻一枚徽标 —— 有新版本 / 最新版 / 离线，点一下可查看更新内容或重新检查\n优化：检查更新单源最多等 5 秒，网络卡住时不再一直停在「检查中」",
+  "version": "1.8.0",
+  "versionCode": 14,
+  "released": "2026-10-29",
+  "notes": "重做：补全改成 VS Code 那套手感 —— ① 模糊匹配：spr 也能出 sprintf、缩写跳词、驼峰命中（词首 +8、连续 +5、驼峰 +2 的权重表）② 打字时列表只收窄不洗牌，删字才重新算 ③ 就近优先：光标附近声明的函数 / 变量排前面，关键字永远垫底 ④ 前缀记忆：同一个前缀下上次选了谁，这次 Tab 直接是它 ⑤ 单字符和纯数字不弹，不打扰输入",
   "apk": "https://github.com/wanvx/CC_Code/releases/latest/download/CC_Code.apk",
   "web": "https://pocketcode-ide.app.workbuddy.host/?sharecode=S62VZQDDME"
 }

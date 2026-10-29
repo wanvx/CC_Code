@@ -7,7 +7,8 @@
 ## 功能
 
 - **离线编译运行**：Clang 22 + wasm-ld + WASI 运行时全部在浏览器里跑，无后端、无上传
-- **代码编辑器**：C/C++ 语法高亮、行号与代码同行对齐、自动补全（标准库 + 项目内符号）、括号配对、缩进参考线（可开关）、Ctrl+滚轮缩放
+- **代码编辑器**：C/C++ 语法高亮、行号与代码同行对齐、括号配对、缩进参考线（可开关）、Ctrl+滚轮缩放
+- **智能补全（VS Code 手感）**：模糊匹配（缩写跳词 / 驼峰）、打字时列表只收窄不洗牌、就近优先（光标附近的符号排前面、关键字垫底）、前缀记忆（上次同前缀选的谁，这次 Tab 直接是它）、单字符与纯数字不打扰
 - **代码字体**：系统等宽 / JetBrains Mono / Source Code Pro / 系统无衬线四选一，前两款内置离线可用（OFL 授权）
 - **配色方案**：三档任选 —— 默认（Material 风）/ 经典（VS Code 的 Dark+ · Light+）/ 2026（VS Code 1.113 起的默认主题 2026 Dark · 2026 Light，变量中性、参数暖橙、类型偏红），后两档跟随深色 / 浅色主题自动切换
 - **括号配对着色**：按嵌套深度金 / 紫 / 蓝三色循环，未闭合的括号标红，光标贴住括号时与它的配对一起高亮；可单独开启，不换配色也能用
@@ -103,6 +104,8 @@ node server.mjs &          # 需要先起静态服务器
 node tests/v3-stdin.mjs    # stdin 输入 / 补全关闭 / 关于与更新
 node tests/v5-ac-panel-guides.mjs   # 补全浮层跟随 / 三 tab 面板 / 缩进参考线
 node tests/v7-ac-first-lint.mjs     # 补全首项选择 / 实时检查
+node tests/v15-ac-vscode.mjs        # VS Code 式补全：模糊命中 / 增量过滤 / 前缀记忆
+node tests/ac-unit.mjs              # 补全评分与排序单测（无需浏览器）
 node tests/v9-scroll-font-panel.mjs # 弹窗不动 / 面板开合 / 孤立点击闸 / 字体
 node tests/v10-perf.mjs             # 增量重绘性能（300 / 2000 行）
 node tests/v12-bracket-colors.mjs   # VSCode 配色 / 括号三色 / 配对高亮 / 性能
