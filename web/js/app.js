@@ -9,8 +9,8 @@ const $ = (s) => document.querySelector(s);
 
 // ── 应用信息（检查更新用，发版时同步 version.json） ──
 const APP_NAME = 'CC_Code';
-const APP_VERSION = '1.8.0';
-const APP_VERSION_CODE = 14;
+const APP_VERSION = '1.8.1';
+const APP_VERSION_CODE = 15;
 const REPO_OWNER = 'wanvx';
 const REPO_NAME = 'CC_Code';
 const REPO_URL = 'https://github.com/' + REPO_OWNER + '/' + REPO_NAME;
@@ -716,7 +716,7 @@ function runOptions(path) {
 }
 
 async function runActive() {
-  if (state.busy) return;
+  if (state.busy) { stopRun(); return; }
   const path = state.active;
   if (!path) { toast('先打开一个源文件'); return; }
   if (!isRunnable(path)) { toast('请选择一个 .c 或 .cpp 源文件'); return; }
@@ -734,11 +734,29 @@ async function runActive() {
     const r = await runProgram({ code: buildSource(path), ...o, stdin: stdinText });
     renderResult(r);
   } catch (err) {
+    if (err && err.stopped) return; // 手动停止：stopRun 已写过终端和状态
     setStatus('出错', 'err');
     termLine('[错误] ' + ((err && err.message) || err), 't-err');
   } finally {
     setBusy(false);
   }
+}
+
+/**
+ * 手动终止当前运行。WASM 程序同步占死 Worker 线程，无法软中断，
+ * 唯一可靠手段是 terminate 整个 Worker，下次运行时重建（编译器资产有 HTTP 缓存，重载很快）。
+ */
+function stopRun() {
+  if (!state.busy) return;
+  if (worker) {
+    try { worker.terminate(); } catch (e) { /* 忽略 */ }
+    worker = null;
+  }
+  for (const [, p] of pending) p.reject(Object.assign(new Error('已停止'), { stopped: true }));
+  pending.clear();
+  setBusy(false);
+  setStatus('已停止', 'err');
+  termLine('■ 运行已被手动停止', 't-warn');
 }
 
 /** 供插件调用：不写终端，只把结果交给插件 */
@@ -758,26 +776,33 @@ async function pluginRun(stdin) {
   }
 }
 
+/** 过滤编译器输出里的噪音行（clang 失败时附带的退出码提示） */
+const NOISE_RE = /^Error:\s*process exited with code \d+\.?$/i;
+
 function parseProblems(errors) {
   const out = [];
   for (const line of errors) {
+    if (NOISE_RE.test(line.trim())) continue;
     const m = /^(.+?):(\d+):(\d+):\s*(error|warning|fatal error|note):\s*(.*)$/.exec(line);
-    if (m) out.push({ file: m[1], line: +m[2], col: +m[3], severity: m[4], message: m[5] });
+    if (m) { out.push({ file: m[1], line: +m[2], col: +m[3], severity: m[4], message: m[5] }); continue; }
+    // 链接器/驱动错误没有行列号（如 wasm-ld: error: undefined symbol），也进问题面板
+    if (/\berror:/i.test(line)) out.push({ file: '', line: 0, col: 0, severity: 'error', message: line.trim() });
   }
   return out;
 }
 
 function renderResult(r) {
-  const problems = parseProblems(r.errors || []);
+  const errLines = (r.errors || []).filter((l) => !NOISE_RE.test(String(l).trim()));
+  const problems = parseProblems(errLines);
   const errs = problems.filter((p) => p.severity !== 'note');
   state.compileProblems = errs;
   editor.setDiagnostics(errs);
   paintProblems();
 
-  if (r.errors && r.errors.length) {
+  if (errLines.length) {
     setStatus('编译失败 · ' + errs.length + ' 个问题', 'err');
     termLine('✕ 编译失败  (' + r.compileMs + ' ms)', 't-err');
-    for (const line of r.errors) {
+    for (const line of errLines) {
       const isErr = /error:/.test(line);
       if (/^\s*(\d+\s*\||\s*\|)/.test(line)) termLine(line, 't-dim');
       else termLine(line, isErr ? 't-err' : /warning:/.test(line) ? 't-warn' : 't-dim');
@@ -863,12 +888,14 @@ function renderProblems(list) {
     '<div class="prob ' + (p.severity === 'warning' ? 'warning' : 'error') + '" data-line="' + p.line + '" data-col="' + p.col + '">' +
     '<span class="p-ico">' + (p.severity === 'warning' ? '▲' : '✕') + '</span>' +
     '<div><div class="p-msg">' + escapeHtml(p.message) + '</div>' +
-    '<div class="p-loc">' + escapeHtml(p.file) + ':' + p.line + ':' + p.col + '</div></div></div>'
+    '<div class="p-loc">' + escapeHtml(p.file ? p.file + ':' + p.line + ':' + p.col : '链接器 / 编译驱动') + '</div></div></div>'
   ).join('');
   $('#problems').querySelectorAll('.prob').forEach((el) => {
     el.addEventListener('click', (e) => {
       if (!isRealTap(e)) return;
-      editor.gotoLine(+el.dataset.line, +el.dataset.col);
+      const ln = +el.dataset.line;
+      if (ln <= 0) return; // 链接器错误无行列号，不可跳转
+      editor.gotoLine(ln, +el.dataset.col);
       if (isMobile()) setPanelCollapsed(true);
     });
   });

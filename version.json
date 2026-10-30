@@ -1,9 +1,9 @@
 {
   "name": "CC_Code",
-  "version": "1.8.0",
-  "versionCode": 14,
-  "released": "2026-10-29",
-  "notes": "重做：补全改成 VS Code 那套手感 —— ① 模糊匹配：spr 也能出 sprintf、缩写跳词、驼峰命中（词首 +8、连续 +5、驼峰 +2 的权重表）② 打字时列表只收窄不洗牌，删字才重新算 ③ 就近优先：光标附近声明的函数 / 变量排前面，关键字永远垫底 ④ 前缀记忆：同一个前缀下上次选了谁，这次 Tab 直接是它 ⑤ 单字符和纯数字不弹，不打扰输入",
+  "version": "1.8.1",
+  "versionCode": 15,
+  "released": "2026-10-30",
+  "notes": "修复两个大问题：① 运行卡死终于能停了 —— 程序死循环 / 算不完时，「运行」按钮会变成红色「停止」，一键终止（下次运行自动重建编译器）② 补全浮层绝不再挡住正在写的代码 —— 空间不足时编辑区自动往上腾位，浮层始终放在当前行下方；函数参数提示同理 ③ 链接错误（undefined symbol 等）现在会进问题面板 ④ 编译失败输出里的 Error: process exited with code 噪音行已过滤",
   "apk": "https://github.com/wanvx/CC_Code/releases/latest/download/CC_Code.apk",
   "web": "https://pocketcode-ide.app.workbuddy.host/?sharecode=S62VZQDDME"
 }

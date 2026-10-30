@@ -904,19 +904,37 @@ export class CodeEditor {
     this.acPrefix = prefix;
     this.acFrom = from;
     this.acOpen = true;
-    // 浮层的所有 DOM 操作都在"锁定编辑区滚动"的范围内做：
-    // WebView 布局变化后可能替我们滚 textarea，这里立刻还原，保证正在编辑的那一行不动。
+    // 光标位置先测好；腾位滚动必须在 _lockScroll 之外做（锁会把不认识的滚动还原掉）
+    this._acPos = this.caretContentPos();
+    this._scrollForAc();
     this._lockScroll(() => {
       if (!sameList) {
         this.acIndex = -1;        // 未选中：第一项只作为"预选"提示，第一下 ↓ 才落到它上面
         this.acNavigated = false;
         this.renderAc();
       }
-      // 光标位置只在弹出时测一次；滚动时用缓存值重算，避免滚动里反复做 DOM 测量
-      this._acPos = this.caretContentPos();
       this.acEl.classList.remove('hidden');
       this.placeAc();
     });
+  }
+
+  /**
+   * 光标行下方放不下浮层时，把编辑区往下滚、让光标行升起来，
+   * 浮层始终摆在正在编辑的这一行下面（VS Code 同款），绝不遮住正在写的地方。
+   * 实在滚不动（已到文件末尾）才由 placeAc 翻到上方。
+   */
+  _scrollForAc() {
+    const NEED = 132;
+    const ta = this.ta, p = this._acPos;
+    if (!p) return;
+    const { oy } = this._hostOffset();
+    const hh = this.host.clientHeight;
+    const caretTop = oy + p.y - ta.scrollTop;
+    const spaceBelow = hh - 4 - (caretTop + p.lh + 2);
+    if (spaceBelow >= NEED) return;
+    const maxScroll = Math.max(0, ta.scrollHeight - ta.clientHeight);
+    const by = Math.min(NEED - spaceBelow, maxScroll - ta.scrollTop);
+    if (by > 0) { ta.scrollTop += by; this.syncScroll(); }
   }
 
   /** 光标在"内容坐标"里的位置（含 padding，未扣滚动） */
@@ -1120,7 +1138,10 @@ export class CodeEditor {
     const hw = host.clientWidth, hh = host.clientHeight;
     const pw = el.offsetWidth || 160, ph = el.offsetHeight || 24;
     let left = ox + p.x - this.ta.scrollLeft;
-    let top = oy + p.y - this.ta.scrollTop - ph - 4;
+    const caretTop = oy + p.y - this.ta.scrollTop;
+    let top = caretTop - ph - 4;
+    // 上方放不下时放到当前行下面，绝不钳到顶上盖住正在编辑的那一行
+    if (top < 4) top = caretTop + p.lh + 2;
     left = Math.min(Math.max(4, hw - pw - 4), Math.max(4, left));
     top = Math.min(Math.max(4, hh - ph - 4), Math.max(4, top));
     el.style.left = Math.round(left) + 'px';
